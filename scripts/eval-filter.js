@@ -20,7 +20,7 @@ const crypto = require('crypto');
 const { FIT_SCHEMA, FIT_PROMPT } = require('./prompts');
 
 const ROOT = path.resolve(__dirname, '..');
-const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, 'config/profile.json'), 'utf8'));
+const CONFIG = JSON.parse(fs.readFileSync(process.env.PROFILE_FILE || path.join(ROOT, 'config/profile.json'), 'utf8'));
 const input = process.argv[2] || path.join(ROOT, 'private/eval/vacancies.json');
 const cacheFile = path.join(path.dirname(input), 'cache.json');
 
@@ -61,7 +61,27 @@ async function main() {
     }
   }
   process.stderr.write('\n');
+  await rescore(items);
   report(items);
+}
+
+// Re-scores every vacancy with the CURRENT keyword rules by running the real
+// "Розібрати й оцінити" node code on a feed built from the saved pages.
+async function rescore(items) {
+  const common = fs.readFileSync(path.join(ROOT, 'src/lib/common.js'), 'utf8');
+  const body = fs.readFileSync(path.join(ROOT, 'src/code/search/parse-score.js'), 'utf8');
+  const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const xml = '<rss><channel>' + items.map((v) => {
+    const title = /djinni\.co/i.test(v.url) ? v.title : `${v.title} в ${v.company || '-'}${v.location ? ', ' + v.location : ''}`;
+    return `<item><title>${esc(title)}</title><link>${esc(v.url)}</link><description>${esc(cache.pages[v.url] || '')}</description></item>`;
+  }).join('') + '</channel></rss>';
+  const wrap = [{ json: { data: xml } }];
+  // eslint-disable-next-line no-new-func
+  const fn = new Function('$input', '$env', `return (async () => {\nconst CONFIG = ${JSON.stringify(CONFIG)};\n${common}\n${body}\n})();`);
+  const [out] = await fn({ all: () => wrap, first: () => wrap[0] }, { MIN_SCORE: '-1000' });
+  const byUrl = {};
+  for (const c of out.json.candidates) byUrl[c.url] = c.score;
+  for (const v of items) v.newScore = byUrl[v.url] !== undefined ? byUrl[v.url] : byUrl[v.url.split('?')[0]];
 }
 
 // Same text the "Лише нові" node sends to the AI
@@ -145,6 +165,7 @@ function stats(items, predict) {
 }
 
 function report(items) {
+  const MIN = Number(process.env.MIN_SCORE || 20);
   const answered = items.filter((v) => cache.ai[aiKey(v)]);
   const noPage = items.filter((v) => !cache.pages[v.url]).length;
   const aiPass = (v) => { const a = cache.ai[aiKey(v)]; return a.fit !== false && a.requires_experience !== true; };
@@ -154,6 +175,8 @@ function report(items) {
     ['Keywords, score ≥ 25', stats(answered, (v) => Number(v.score) >= 25)],
     ['Keywords + AI check', stats(answered, aiPass)],
     ['Keywords, score ≥ 20 + AI check', stats(answered, (v) => Number(v.score) >= 20 && aiPass(v))],
+    [`Current keyword rules, score ≥ ${MIN} (re-scored)`, stats(answered, (v) => v.newScore >= MIN)],
+    [`Current keyword rules, score ≥ ${MIN} + AI check (current setup)`, stats(answered, (v) => v.newScore >= MIN && aiPass(v))],
   ];
   console.log(`Evaluated ${answered.length} of ${items.length} labelled vacancies (${items.length - answered.length} without an AI answer, ${noPage} pages not available). Model: ${MODEL}, prompt version ${AI_VERSION}\n`);
   console.log('| Filter | Cards shown | Of them I added (precision) | My additions it kept (recall) |');

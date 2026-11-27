@@ -4,7 +4,8 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const COMMON = fs.readFileSync(path.join(ROOT, 'src/lib/common.js'), 'utf8');
-const CONFIG = fs.readFileSync(path.join(ROOT, 'config/profile.json'), 'utf8');
+// Tests use a fixed profile, not the personal config/profile.json
+const CONFIG = fs.readFileSync(path.join(__dirname, 'profile.fixture.json'), 'utf8');
 
 async function runCode(file, { input = [], nodes = {}, env = {} } = {}) {
   const body = fs.readFileSync(path.join(ROOT, 'src/code', file), 'utf8');

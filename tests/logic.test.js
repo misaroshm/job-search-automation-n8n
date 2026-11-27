@@ -285,3 +285,21 @@ test('strip-kind: removes the routing field before writing to the sheet', async 
   const [r] = await runCode('search/strip-kind.js', { input: [{ kind: 'inbox', a: 1 }] });
   assert.deepStrictEqual(r, { a: 1 });
 });
+
+// ------------------------------------------------------------- personal config
+
+test('config/profile.json is valid: JSON parses, patterns compile, feeds are set', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const text = fs.readFileSync(path.join(__dirname, '..', 'config', 'profile.json'), 'utf8');
+  let cfg;
+  assert.doesNotThrow(() => { cfg = JSON.parse(text); }, 'config/profile.json is not valid JSON (missing comma or quote?)');
+  assert.ok(Array.isArray(cfg.candidate_profile) && cfg.candidate_profile.length, 'candidate_profile is empty');
+  assert.ok(cfg.feeds.dou_searches.length || cfg.feeds.djinni_categories.length, 'no feeds');
+  for (const c of cfg.feeds.djinni_categories) assert.notStrictEqual(c.toLowerCase(), 'all', 'use "" for all Djinni categories');
+  const rules = [...cfg.scoring.boost, ...cfg.scoring.penalty, cfg.scoring.preferred_location];
+  for (const r of rules) {
+    assert.doesNotThrow(() => new RegExp(r.pattern, 'i'), `bad pattern: ${r.pattern}`);
+    assert.ok(Number.isFinite(r.points), `points must be a number: ${r.pattern}`);
+  }
+});
