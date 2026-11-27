@@ -3,3 +3,6 @@ setup/google-service-account.json
 *.json.bak
 node_modules/
 .DS_Store
+
+# Local data exports (never committed)
+private/

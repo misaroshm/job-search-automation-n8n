@@ -46,6 +46,23 @@ All connections are outgoing: nothing on the internet needs to reach the laptop.
 
 **Resilience.** Retries on Sheets, HTTP and AI nodes (Telegram calls retry for ~25 s to ride out the network coming back after sleep), public DNS for the container, a global error workflow, schedule triggers with "coalesce" misfire policy (if the laptop was asleep at 9:00 the run happens when it wakes up), stale Telegram buttons are detected by a row hash instead of updating the wrong row.
 
+## Results
+
+Real use on my own job search. The tracker runs since 8 Oct 2026, the auto-search since 4 Nov, the AI check since 24 Nov (numbers as of 27 Nov 2026).
+
+| | |
+|---|---|
+| Vacancies found by the search (passed keyword scoring) | 210 (110 Djinni, 100 DOU) |
+| …reviewed with one tap in Telegram | 198: 31 added, 160 skipped, 7 rejected by AI; 12 waiting |
+| Checked by AI (since 24 Nov) | 24: 7 rejected for an experience requirement or a profile mismatch |
+| Applications sent | 10 |
+| Got an answer | 8 of 10 |
+| Reached an interview or a test task | 6 |
+| Median time to an answer | 11 days |
+| Rejection letters analysed by AI | 4 |
+
+**What the numbers say.** The keyword filter is deliberately broad: I skipped 160 of the 198 vacancies it surfaced. The AI check removed 7 of 24, but I still skipped 15 of the 17 it let through, so it is too lenient for now. Next step: label a sample of vacancies by hand, measure precision of keywords vs keywords + AI, and tighten the profile and prompt in [`config/profile.json`](config/profile.json).
+
 ## Engineering
 
 - Search settings live in [`config/profile.json`](config/profile.json); the build injects them into the Code nodes that need them.
