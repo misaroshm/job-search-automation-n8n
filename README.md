@@ -4,6 +4,13 @@ A self-hosted automation that runs my job search: it finds entry-level vacancies
 
 Built with **n8n**, **Google Sheets API**, **Telegram Bot API** and **Google Gemini**, running in **Docker**.
 
+<p align="center">
+  <img src="docs/screenshots/01-inbox-cards.png" width="32%" alt="Vacancy cards in Telegram with Add / Skip buttons">
+  <img src="docs/screenshots/03-stages.png" width="32%" alt="Changing an application's stage from Telegram">
+  <img src="docs/screenshots/02-search-run.png" width="32%" alt="On-demand search report">
+</p>
+<p align="center"><sub>Vacancy cards with one-tap buttons · changing a stage · an on-demand search run</sub></p>
+
 ## What it does
 
 | Workflow | Trigger | What happens |
@@ -15,6 +22,14 @@ Built with **n8n**, **Google Sheets API**, **Telegram Bot API** and **Google Gem
 | **0 · Error alerts** | any workflow fails | Sends the workflow, node and error to Telegram with a link to the execution. |
 
 ## Architecture
+
+The vacancy search workflow in n8n: RSS feeds → keyword scoring → de-duplication against the sheet → Gemini check → sheet + Telegram.
+
+![Vacancy search workflow in n8n](docs/screenshots/04-n8n-search.png)
+
+The Telegram bot workflow: poll updates → read both sheets → one Code node returns a list of effects → a Switch sends each effect to the node that performs it.
+
+![Telegram bot workflow in n8n](docs/screenshots/05-n8n-bot.png)
 
 ```mermaid
 flowchart LR
