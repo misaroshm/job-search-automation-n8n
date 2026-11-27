@@ -11,10 +11,12 @@ const FIT_SCHEMA = {
   required: ['fit', 'requires_experience', 'why'],
 };
 const FIT_PROMPT = `You screen job vacancies for one specific entry-level candidate.
-Decide whether the vacancy is a realistic match for the candidate profile given in the text.
+Decide whether the vacancy is worth showing to the candidate, using the profile given in the text.
 Rules:
+- Treat the profile as preferences, not hard rules. "fit" means the candidate would plausibly want to see this vacancy; when in doubt, "fit" is true.
+- "fit" is false only for clear mismatches: roles for experienced specialists, software engineering as the main job, sales-only roles, customer support, or anything else the profile lists as usually not a fit.
+- Location or office format alone is never a reason for "fit" to be false.
 - "requires_experience" is true only when the vacancy clearly asks for 1 year or more of commercial experience. "Experience is a plus" or internships do not count.
-- "fit" is false for software development, design, pure sales or customer support roles, and for anything the profile says is not interesting.
 - Write "why" in Ukrainian, plain and specific, no more than 15 words.
 Only extract the requested fields.`;
 

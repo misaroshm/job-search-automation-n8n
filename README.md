@@ -76,19 +76,30 @@ Real use on my own job search. The tracker runs since 8 Oct 2026, the auto-searc
 | Median time to an answer | 11 days |
 | Rejection letters analysed by AI | 4 |
 
-**What the numbers say.** The keyword filter is deliberately broad: I skipped 160 of the 198 vacancies it surfaced. So I measured the filter instead of guessing.
+**What the numbers say.** The keyword filter was too broad: I skipped 160 of the 198 vacancies it surfaced. So I measured the filter instead of guessing.
 
 ### Filter evaluation
 
-My own decisions are the ground truth: 191 vacancies the search surfaced, 31 of which I added and 160 skipped. [`scripts/eval-filter.js`](scripts/eval-filter.js) downloads each vacancy page and runs the same Gemini check as the workflow (same prompt, schema, profile and model), then compares the variants:
+My own decisions are the ground truth: 191 vacancies the search surfaced, 31 of which I added and 160 skipped. [`scripts/eval-filter.js`](scripts/eval-filter.js) downloads each vacancy page and runs the same Gemini check as the workflow (same prompt, schema, profile and model), then compares the variants (`npm run eval`).
+
+**Round 1.** The profile was written as hard rules ("not interested in design / development", "on-site in Lviv"):
 
 | Filter | Cards shown | Of them I added (precision) | My additions it kept (recall) |
 |---|---|---|---|
-| Keywords only (current threshold 15) | 191 | 31 (16%) | 31 of 31 (100%) |
+| Keywords, threshold 15 (old setting) | 191 | 31 (16%) | 31 of 31 (100%) |
 | Keywords, score ≥ 20 | 58 | 25 (43%) | 25 of 31 (81%) |
 | Keywords + AI check | 82 | 20 (24%) | 20 of 31 (65%) |
 
-The AI check in its current form is worse than simply raising the keyword threshold: it shows more cards and loses more of the vacancies I wanted. Reading the 11 it would have dropped, the reason is the profile, not the model: it says "not interested in design / development" and "on-site in Lviv", and Gemini applies that strictly, while in practice I did add a trainee designer, a junior data engineer and a few Kyiv-office roles. So the next steps are to raise `MIN_SCORE` to 20, rewrite the profile as preferences instead of hard rules, and re-run `npm run eval` to compare.
+The AI check was worse than simply raising the keyword threshold. In 10 of the 11 vacancies it wrongly dropped, the reason was the profile: Gemini applied it literally, while in practice I did add a trainee designer, a junior data engineer and three Kyiv-office roles.
+
+**Round 2.** I raised `MIN_SCORE` to 20, rewrote the profile as preferences ("also open to adjacent trainee roles", "an office in another city is fine for a good match") and told the model that location alone is never a reason to reject:
+
+| Filter | Cards shown | Of them I added (precision) | My additions it kept (recall) |
+|---|---|---|---|
+| Keywords + AI check | 134 | 30 (22%) | 30 of 31 (97%) |
+| **Keywords, score ≥ 20 + AI check (current setup)** | **51** | **24 (47%)** | **24 of 31 (77%)** |
+
+The current setup shows almost four times fewer cards than before, and about every second one is a vacancy I want. Most of that comes from the keyword threshold; the AI check on top removes 7 more cards at the cost of one wanted vacancy, and writes a one-line reason on every card. One caveat: the profile was tuned on the same 191 vacancies it is measured on, so the real numbers on new vacancies will likely be a bit lower. I'll re-run the evaluation on the next few weeks of decisions.
 
 ## Engineering
 

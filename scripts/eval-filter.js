@@ -16,6 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { FIT_SCHEMA, FIT_PROMPT } = require('./prompts');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -29,6 +30,9 @@ const MODEL = process.env.GEMINI_MODEL || 'models/gemini-3.5-flash-lite';
 const DELAY_MS = Number(process.env.EVAL_DELAY_MS || 4500); // stays inside the free-tier rate limit
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
 
+// AI answers are cached per prompt + profile + model, so editing either re-asks Gemini
+const AI_VERSION = crypto.createHash('sha1').update(FIT_PROMPT + JSON.stringify(CONFIG.candidate_profile) + MODEL).digest('hex').slice(0, 8);
+const aiKey = (v) => AI_VERSION + '|' + v.url;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const cache = fs.existsSync(cacheFile) ? JSON.parse(fs.readFileSync(cacheFile, 'utf8')) : { pages: {}, ai: {} };
 const saveCache = () => fs.writeFileSync(cacheFile, JSON.stringify(cache, null, 1));
@@ -49,8 +53,8 @@ async function main() {
       saveCache();
       await sleep(800);
     }
-    if (cache.ai[v.url] === undefined) {
-      cache.ai[v.url] = await askGemini(aiText(v, cache.pages[v.url]));
+    if (cache.ai[aiKey(v)] === undefined) {
+      cache.ai[aiKey(v)] = await askGemini(aiText(v, cache.pages[v.url]));
       saveCache();
       process.stderr.write(`\r${n}/${items.length}`);
       await sleep(DELAY_MS);
@@ -141,22 +145,23 @@ function stats(items, predict) {
 }
 
 function report(items) {
-  const answered = items.filter((v) => cache.ai[v.url]);
+  const answered = items.filter((v) => cache.ai[aiKey(v)]);
   const noPage = items.filter((v) => !cache.pages[v.url]).length;
-  const aiPass = (v) => { const a = cache.ai[v.url]; return a.fit !== false && a.requires_experience !== true; };
+  const aiPass = (v) => { const a = cache.ai[aiKey(v)]; return a.fit !== false && a.requires_experience !== true; };
   const rows = [
     ['Keywords only (everything the search surfaced)', stats(answered, () => true)],
     ['Keywords, score ≥ 20', stats(answered, (v) => Number(v.score) >= 20)],
     ['Keywords, score ≥ 25', stats(answered, (v) => Number(v.score) >= 25)],
     ['Keywords + AI check', stats(answered, aiPass)],
+    ['Keywords, score ≥ 20 + AI check', stats(answered, (v) => Number(v.score) >= 20 && aiPass(v))],
   ];
-  console.log(`Evaluated ${answered.length} of ${items.length} labelled vacancies (${items.length - answered.length} without an AI answer, ${noPage} pages not available). Model: ${MODEL}\n`);
+  console.log(`Evaluated ${answered.length} of ${items.length} labelled vacancies (${items.length - answered.length} without an AI answer, ${noPage} pages not available). Model: ${MODEL}, prompt version ${AI_VERSION}\n`);
   console.log('| Filter | Cards shown | Of them I added (precision) | My additions it kept (recall) |');
   console.log('|---|---|---|---|');
   for (const [name, s] of rows) console.log(`| ${name} | ${s.shown} | ${s.tp} (${s.precision}) | ${s.tp} of ${s.tp + s.fn} (${s.recall}) |`);
   const reasons = {};
   for (const v of answered) {
-    const a = cache.ai[v.url];
+    const a = cache.ai[aiKey(v)];
     const k = a.requires_experience ? 'asks for experience' : a.fit === false ? 'not my profile' : 'passed';
     reasons[k] = (reasons[k] || 0) + 1;
   }
@@ -164,7 +169,7 @@ function report(items) {
   const missed = answered.filter((v) => v.label && !aiPass(v));
   if (missed.length) {
     console.log('\nVacancies I added but the AI would have dropped:');
-    for (const v of missed) console.log(`- ${v.title} (${cache.ai[v.url].why})`);
+    for (const v of missed) console.log(`- ${v.title} (${cache.ai[aiKey(v)].why})`);
   }
 }
 

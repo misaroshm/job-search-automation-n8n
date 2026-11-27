@@ -2,7 +2,7 @@
 // the ones above the threshold. Always returns exactly one item:
 // { candidates: [...], feedsOk, feedsFailed, seen }
 
-const MIN_SCORE = Number($env.MIN_SCORE || 15);
+const MIN_SCORE = Number($env.MIN_SCORE || 20);
 
 // Keyword rules come from config/profile.json (CONFIG is injected by the build).
 // Points: boosts count x2 in the title and x1 in the description; penalties apply to the title only.

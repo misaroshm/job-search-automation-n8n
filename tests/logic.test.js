@@ -17,6 +17,7 @@ test('parse-score: keeps relevant vacancies and drops experience / dev / support
     input: [{ data: DOU_RSS }, { data: DOU_RSS }, { data: DJINNI_RSS }, { error: 'timeout' },
       { data: '<?xml version="1.0"?><rss version="2.0"><channel><title>DOU</title></channel></rss>' }, // empty search
       { data: '<html>502 Bad Gateway</html>' }],
+    env: { MIN_SCORE: '15' }, // the fixtures score 19-20; the threshold itself is tested below
   });
   const titles = res.candidates.map((c) => c.title);
   assert.deepStrictEqual(res.feedsOk, 4, 'an empty feed still counts as opened');
@@ -34,6 +35,13 @@ test('parse-score: keeps relevant vacancies and drops experience / dev / support
   const djinni = res.candidates.find((c) => c.source === 'Djinni');
   assert.strictEqual(djinni && djinni.company, 'Coinly');
   for (const c of res.candidates) assert.ok(c.score >= 15);
+});
+
+test('parse-score: default threshold is 20', async () => {
+  const [res] = await runCode('search/parse-score.js', { input: [{ data: DOU_RSS }, { data: DJINNI_RSS }] });
+  assert.ok(res.candidates.length > 0);
+  for (const c of res.candidates) assert.ok(c.score >= 20, `${c.title} scored ${c.score}`);
+  assert.ok(!res.candidates.some((c) => c.title === 'Trainee QA'), 'score 19 is below the default threshold');
 });
 
 test('parse-score: experience requirement detection in Ukrainian, Russian and English', async () => {
