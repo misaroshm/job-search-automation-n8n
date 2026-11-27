@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node scripts/build.js",
     "test": "node --test tests/logic.test.js",
-    "check": "npm test && npm run build && git diff --exit-code workflows/"
+    "check": "npm test && npm run build && git diff --exit-code workflows/",
+    "eval": "node scripts/eval-filter.js private/eval/vacancies.json"
   },
   "engines": {
     "node": ">=20"

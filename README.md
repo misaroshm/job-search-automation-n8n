@@ -76,7 +76,19 @@ Real use on my own job search. The tracker runs since 8 Oct 2026, the auto-searc
 | Median time to an answer | 11 days |
 | Rejection letters analysed by AI | 4 |
 
-**What the numbers say.** The keyword filter is deliberately broad: I skipped 160 of the 198 vacancies it surfaced. The AI check removed 7 of 24, but I still skipped 15 of the 17 it let through, so it is too lenient for now. Next step: label a sample of vacancies by hand, measure precision of keywords vs keywords + AI, and tighten the profile and prompt in [`config/profile.json`](config/profile.json).
+**What the numbers say.** The keyword filter is deliberately broad: I skipped 160 of the 198 vacancies it surfaced. So I measured the filter instead of guessing.
+
+### Filter evaluation
+
+My own decisions are the ground truth: 191 vacancies the search surfaced, 31 of which I added and 160 skipped. [`scripts/eval-filter.js`](scripts/eval-filter.js) downloads each vacancy page and runs the same Gemini check as the workflow (same prompt, schema, profile and model), then compares the variants:
+
+| Filter | Cards shown | Of them I added (precision) | My additions it kept (recall) |
+|---|---|---|---|
+| Keywords only (current threshold 15) | 191 | 31 (16%) | 31 of 31 (100%) |
+| Keywords, score ≥ 20 | 58 | 25 (43%) | 25 of 31 (81%) |
+| Keywords + AI check | 82 | 20 (24%) | 20 of 31 (65%) |
+
+The AI check in its current form is worse than simply raising the keyword threshold: it shows more cards and loses more of the vacancies I wanted. Reading the 11 it would have dropped, the reason is the profile, not the model: it says "not interested in design / development" and "on-site in Lviv", and Gemini applies that strictly, while in practice I did add a trainee designer, a junior data engineer and a few Kyiv-office roles. So the next steps are to raise `MIN_SCORE` to 20, rewrite the profile as preferences instead of hard rules, and re-run `npm run eval` to compare.
 
 ## Engineering
 
@@ -95,6 +107,7 @@ src/code/bot/*.js        Telegram bot logic, vacancy page parser
 src/code/digest/*.js     morning digest
 src/code/rejections/*.js AI rejection analysis and weekly insights
 scripts/build.js         builds workflows/*.json
+scripts/eval-filter.js   measures the filter against my own add / skip decisions
 workflows/               ready-to-import n8n workflows
 setup/                   creates n8n credentials from .env
 tests/                   unit tests
