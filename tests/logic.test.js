@@ -14,11 +14,13 @@ test('feeds: builds DOU and Djinni feed URLs', async () => {
 
 test('parse-score: keeps relevant vacancies and drops experience / dev / support', async () => {
   const [res] = await runCode('search/parse-score.js', {
-    input: [{ data: DOU_RSS }, { data: DOU_RSS }, { data: DJINNI_RSS }, { error: 'timeout' }],
+    input: [{ data: DOU_RSS }, { data: DOU_RSS }, { data: DJINNI_RSS }, { error: 'timeout' },
+      { data: '<?xml version="1.0"?><rss version="2.0"><channel><title>DOU</title></channel></rss>' }, // empty search
+      { data: '<html>502 Bad Gateway</html>' }],
   });
   const titles = res.candidates.map((c) => c.title);
-  assert.deepStrictEqual(res.feedsOk, 3);
-  assert.deepStrictEqual(res.feedsFailed, 1);
+  assert.deepStrictEqual(res.feedsOk, 4, 'an empty feed still counts as opened');
+  assert.deepStrictEqual(res.feedsFailed, 2, 'timeout and an HTML error page are failures');
   assert.ok(titles.includes('Trainee QA'), 'Nordlight trainee QA kept');
   assert.ok(titles.includes('Junior MarTech Automation Specialist'), '"6 months is a plus" is not an experience requirement');
   assert.ok(!titles.includes('Junior Business Analyst'), '1+ year required -> dropped');

@@ -107,7 +107,8 @@ let feedsOk = 0, feedsFailed = 0, seen = 0;
 const byKey = {};
 for (const item of $input.all()) {
   const xml = item.json.data;
-  if (typeof xml !== 'string' || xml.indexOf('<item') === -1) { feedsFailed++; continue; }
+  // A valid feed with no vacancies (e.g. a narrow search like "n8n") is not a failure
+  if (typeof xml !== 'string' || !/<(?:rss|channel)[\s>]/i.test(xml)) { feedsFailed++; continue; }
   feedsOk++;
   for (const x of parseRss(xml)) {
     if (!x.link) continue;
