@@ -1,0 +1,36 @@
+# Job tracker: a single n8n container.
+# The Telegram bot polls for updates, so nothing on the internet has to reach
+# this machine: no tunnel, no open ports, works on a laptop that sleeps.
+# The editor is only available on http://localhost:5678.
+
+name: job-tracker
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.48.8
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    # Public DNS: Docker's built-in resolver sometimes loses the network after the laptop wakes up
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    env_file: .env
+    environment:
+      GENERIC_TIMEZONE: Europe/Kyiv
+      TZ: Europe/Kyiv
+      N8N_EDITOR_BASE_URL: http://localhost:5678
+      N8N_SECURE_COOKIE: "false"             # editor is only reachable on localhost
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"  # workflows read settings from .env via $env
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: "336"          # keep two weeks of execution history
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows:ro
+      - ./setup:/setup:ro
+
+volumes:
+  n8n_data:

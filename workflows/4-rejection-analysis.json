@@ -1,0 +1,630 @@
+{
+  "id": "jtRejections0001",
+  "name": "4 · AI-аналіз відмов",
+  "active": true,
+  "nodes": [
+    {
+      "id": "67df75ea-c531-4472-a890-c795bcb3953c",
+      "name": "Щодня о 20:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        -100
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 20 * * *"
+            }
+          ]
+        },
+        "misfirePolicy": "coalesce"
+      }
+    },
+    {
+      "id": "f211c7ab-1006-4a91-adea-aa7e729a5f91",
+      "name": "Щопонеділка о 10:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        100
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 10 * * 1"
+            }
+          ]
+        },
+        "misfirePolicy": "coalesce"
+      }
+    },
+    {
+      "id": "54e58a57-f549-4123-a1b1-d2f71eb2b2ea",
+      "name": "Виклик з бота",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "1c33974e-be7a-42f0-a2d3-21dc79a14ce1",
+      "name": "Режим: щодня",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { mode: 'daily' } }];"
+      }
+    },
+    {
+      "id": "aef2fd4c-72e9-42a7-a151-431d933a74b4",
+      "name": "Режим: щотижня",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        100
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { mode: 'weekly' } }];"
+      }
+    },
+    {
+      "id": "8b0c9ea7-9b7f-4006-aace-dbcd2882c62b",
+      "name": "Режим: з бота",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { mode: 'insights' } }];"
+      }
+    },
+    {
+      "id": "73bb8a73-e55b-4c8c-aad1-39b0ff60e1d7",
+      "name": "Вакансії: прочитати",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        480,
+        100
+      ],
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Вакансії"
+        },
+        "operation": "read",
+        "filtersUI": {},
+        "options": {
+          "outputFormatting": {
+            "values": {
+              "general": "FORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleApi": {
+          "id": "jtSheetsSA000001",
+          "name": "Google Sheets (service account)"
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "b5ff0568-7908-420e-af39-ed5af4937623",
+      "name": "Нові відмови",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/rejections/pick.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Picks rejections that have a letter pasted into \"Нотатки\" but no AI analysis yet.\n// route 0 = rows to analyse, route 1 = nothing new to analyse.\n\nconst MIN_LETTER = 80;\nconst MAX_PER_RUN = 10;\n\nconst rows = rowsOf('Вакансії: прочитати');\nconst todo = rows.filter((r) =>\n  r[COL.STAGE] === 'Відмова' &&\n  String(r[COL.NOTES] || '').trim().length >= MIN_LETTER &&\n  !r[COL.AI_REASON]);\n\nif (!todo.length) return [{ json: { route: 1 } }];\n\nreturn todo.slice(0, MAX_PER_RUN).map((r) => ({ json: {\n  route: 0,\n  row_number: r.row_number,\n  company: r[COL.COMPANY],\n  position: r[COL.POSITION],\n  aiText: [\n    `Company: ${r[COL.COMPANY]}`,\n    `Position: ${r[COL.POSITION]}`,\n    `Hiring stage reached: ${r[COL.REASON] ? 'rejected, recorded reason: ' + r[COL.REASON] : 'rejected'}`,\n    '',\n    'Rejection letter:',\n    String(r[COL.NOTES]).slice(0, 4000),\n  ].join('\\n'),\n} }));\n"
+      }
+    },
+    {
+      "id": "1b42b17f-98e5-490c-af6f-b27800ddca2e",
+      "name": "Є що розібрати?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        960,
+        100
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.route }}"
+      }
+    },
+    {
+      "id": "dd1e3c3a-b2b7-4f0c-ae8e-ef99341a5814",
+      "name": "AI: розбір відмови",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "text": "={{ $json.aiText }}",
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"reason_category\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"Мало досвіду\",\n        \"Не пройшла тестове\",\n        \"Обрали іншого кандидата\",\n        \"Слабка англійська\",\n        \"Не підійшла по софт-скілах\",\n        \"Вакансію закрили\",\n        \"Не зійшлись по зарплаті\",\n        \"Без пояснень\",\n        \"Моє рішення\",\n        \"Інше\"\n      ]\n    },\n    \"gaps\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"Concrete things the company said were missing (Ukrainian). Empty if the letter is a template.\"\n    },\n    \"advice\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"1-3 concrete things to improve before the next interview (Ukrainian)\"\n    },\n    \"next_action\": {\n      \"type\": \"string\",\n      \"description\": \"One concrete follow-up step with this company, in Ukrainian\"\n    },\n    \"door_open\": {\n      \"type\": \"boolean\",\n      \"description\": \"Did the company explicitly offer to stay in touch, refer, or consider for other roles?\"\n    }\n  },\n  \"required\": [\n    \"reason_category\",\n    \"gaps\",\n    \"advice\",\n    \"next_action\",\n    \"door_open\"\n  ]\n}",
+        "options": {
+          "systemPromptTemplate": "You analyse rejection letters received by an entry-level job candidate in Ukrainian IT.\nSeparate polite template phrases from real signals. Only list a gap if the letter actually says or clearly implies it;\nif the letter is a pure template, say so instead of inventing reasons.\n\"next_action\" must be specific to this letter (e.g. reply and accept the offered referral, ask for detailed feedback, fill in the feedback form).\nAnswer in Ukrainian. Only extract the requested fields.",
+          "batching": {
+            "batchSize": 2,
+            "delayBetweenBatches": 13000
+          }
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "50bdfb56-dd15-4066-a340-048fbf1bf16b",
+      "name": "Gemini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1200,
+        220
+      ],
+      "parameters": {
+        "modelName": "={{ $env.GEMINI_MODEL || \"models/gemini-3.5-flash-lite\" }}",
+        "options": {
+          "temperature": 0.2,
+          "maxOutputTokens": 2048
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "jtGeminiCred0001",
+          "name": "Google Gemini"
+        }
+      }
+    },
+    {
+      "id": "9021b359-d3fb-46d6-aa15-185164c2497e",
+      "name": "Записати розбір",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/rejections/write.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Turns the AI analysis into cells for the \"Вакансії\" sheet.\n// Only column values + row_number are returned, so the Sheets node can create\n// the AI columns automatically the first time.\n\nconst src = $('Нові відмови').all().map((i) => i.json);\nconst join = (v) => (Array.isArray(v) ? v.filter(Boolean).join('; ') : String(v || ''));\n\nconst out = [];\n$input.all().forEach((item, i) => {\n  const a = item.json.output;\n  const s = src[i];\n  if (!a || !s) return; // AI step failed for this one: it will be retried next run\n  out.push({ json: {\n    row_number: s.row_number,\n    [COL.AI_REASON]: REASONS.indexOf(a.reason_category) !== -1 ? a.reason_category : 'Інше',\n    [COL.AI_GAPS]: join(a.gaps),\n    [COL.AI_ADVICE]: join(a.advice),\n    [COL.AI_ACTION]: String(a.next_action || '') + (a.door_open ? ' (двері відчинені)' : ''),\n  } });\n});\nreturn out;\n"
+      }
+    },
+    {
+      "id": "e795f946-44f1-44a1-a5d9-a89e3fd6a996",
+      "name": "Вакансії: записати AI",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1680,
+        0
+      ],
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Вакансії"
+        },
+        "operation": "update",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "handlingExtraData": "insertInNewColumn"
+        }
+      },
+      "credentials": {
+        "googleApi": {
+          "id": "jtSheetsSA000001",
+          "name": "Google Sheets (service account)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "4f7a040a-bd3f-492d-a970-2a9e7b929443",
+      "name": "Підсумок",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        200
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/rejections/summary.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Sends a short card for every newly analysed rejection and, for the weekly run\n// or the /insights command, prepares one request to the AI that looks for\n// patterns across all analysed rejections.\n// Output: kind 'tg' items and, optionally, one kind 'ai' item.\n\nfunction getMode() {\n  for (const n of ['Режим: щодня', 'Режим: щотижня', 'Режим: з бота']) {\n    try { return $(n).first().json.mode; } catch (e) { /* that trigger did not fire */ }\n  }\n  return 'daily';\n}\n\nconst mode = getMode();\nconst rows = rowsOf('Вакансії: прочитати');\nlet fresh = [];\ntry { fresh = $('Записати розбір').all().map((i) => i.json); } catch (e) { fresh = []; }\n\nconst merged = rows.map((r) => Object.assign({}, r, fresh.find((f) => f.row_number === r.row_number) || {}));\nconst analysed = merged.filter((r) => r[COL.STAGE] === 'Відмова' && r[COL.AI_REASON]);\nconst out = [];\n\nfor (const f of fresh) {\n  const r = merged.find((x) => x.row_number === f.row_number);\n  if (!r) continue;\n  out.push(sendText([\n    `🧠 <b>Розбір відмови: ${esc(r[COL.COMPANY])}</b> — ${esc(r[COL.POSITION])}`,\n    `Причина: ${esc(r[COL.AI_REASON])}`,\n    r[COL.AI_GAPS] ? `Чого бракувало: ${esc(r[COL.AI_GAPS])}` : '',\n    r[COL.AI_ADVICE] ? `Що підтягнути: ${esc(r[COL.AI_ADVICE])}` : '',\n    r[COL.AI_ACTION] ? `👉 ${esc(r[COL.AI_ACTION])}` : '',\n  ].filter(Boolean).join('\\n')));\n}\n\nconst wantsSummary = mode === 'weekly' || mode === 'insights';\nif (wantsSummary && analysed.length >= 2) {\n  out.push({ json: {\n    kind: 'ai',\n    count: analysed.length,\n    aiText: analysed.map((r, i) => [\n      `#${i + 1} ${r[COL.COMPANY]} — ${r[COL.POSITION]}`,\n      `Reason: ${r[COL.AI_REASON]}`,\n      `Gaps: ${r[COL.AI_GAPS] || '-'}`,\n      `Advice: ${r[COL.AI_ADVICE] || '-'}`,\n    ].join('\\n')).join('\\n\\n'),\n  } });\n} else if (mode === 'insights' && !fresh.length) {\n  out.push(sendText(analysed.length\n    ? 'Поки розібрана лише одна відмова, для висновків потрібно хоча б дві.'\n    : 'Поки немає розібраних відмов. Встав текст відмови в колонку \"Нотатки\" і постав етап \"Відмова\".'));\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "7240088d-0204-43d0-ad69-d01be280a3e0",
+      "name": "Куди",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        2160,
+        200
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.kind === \"ai\" ? 1 : 0 }}"
+      }
+    },
+    {
+      "id": "9e25b2ae-5f22-42e9-a241-7affb047e429",
+      "name": "AI: спільні патерни",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        360
+      ],
+      "parameters": {
+        "text": "={{ $json.aiText }}",
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"summary\": {\n      \"type\": \"string\",\n      \"description\": \"Two sentences in Ukrainian: the overall picture\"\n    },\n    \"patterns\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"Problems that repeat across several rejections (Ukrainian)\"\n    },\n    \"strengths\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"What companies noted positively (Ukrainian)\"\n    },\n    \"focus_next\": {\n      \"type\": \"array\",\n      \"items\": {\n        \"type\": \"string\"\n      },\n      \"description\": \"2-3 concrete priorities for the next two weeks (Ukrainian)\"\n    }\n  },\n  \"required\": [\n    \"summary\",\n    \"patterns\",\n    \"strengths\",\n    \"focus_next\"\n  ]\n}",
+        "options": {
+          "systemPromptTemplate": "You review a list of analysed job rejections of one entry-level candidate and find patterns.\nBe honest and concrete, no generic career advice. A pattern needs at least two rejections behind it.\nAnswer in Ukrainian. Only extract the requested fields."
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "ab304f59-a82a-4462-a801-edc6a929ad0c",
+      "name": "Gemini (висновки)",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        2400,
+        580
+      ],
+      "parameters": {
+        "modelName": "={{ $env.GEMINI_MODEL || \"models/gemini-3.5-flash-lite\" }}",
+        "options": {
+          "temperature": 0.2,
+          "maxOutputTokens": 2048
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "jtGeminiCred0001",
+          "name": "Google Gemini"
+        }
+      }
+    },
+    {
+      "id": "ec647de7-9e53-49ec-a606-b05df10c23b5",
+      "name": "Висновки",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        360
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/rejections/insights.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Formats the AI's cross-rejection insights for Telegram.\nconst a = $input.first().json.output;\nconst n = $('Підсумок').all().map((i) => i.json).find((j) => j.kind === 'ai').count;\nif (!a) return [sendText('⚠️ AI не зміг зробити висновки, спробуй /insights пізніше.')];\nconst list = (t, xs) => (xs && xs.length ? `\\n<b>${t}</b>\\n` + xs.map((x) => '• ' + esc(x)).join('\\n') : '');\nreturn [sendText(\n  `🧠 <b>Що кажуть відмови</b> (розібрано ${n})\\n` +\n  (a.summary ? '\\n' + esc(a.summary) + '\\n' : '') +\n  list('Що повторюється', a.patterns) +\n  list('Що вже працює', a.strengths) +\n  list('На чому зосередитись', a.focus_next),\n)];\n"
+      }
+    },
+    {
+      "id": "f75e1797-d055-498f-afd8-d7c65abdd76f",
+      "name": "Telegram API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2880,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.method }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 60
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Щодня о 20:00": {
+      "main": [
+        [
+          {
+            "node": "Режим: щодня",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Щопонеділка о 10:00": {
+      "main": [
+        [
+          {
+            "node": "Режим: щотижня",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Виклик з бота": {
+      "main": [
+        [
+          {
+            "node": "Режим: з бота",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Режим: щодня": {
+      "main": [
+        [
+          {
+            "node": "Вакансії: прочитати",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Режим: щотижня": {
+      "main": [
+        [
+          {
+            "node": "Вакансії: прочитати",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Режим: з бота": {
+      "main": [
+        [
+          {
+            "node": "Вакансії: прочитати",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Вакансії: прочитати": {
+      "main": [
+        [
+          {
+            "node": "Нові відмови",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Нові відмови": {
+      "main": [
+        [
+          {
+            "node": "Є що розібрати?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Є що розібрати?": {
+      "main": [
+        [
+          {
+            "node": "AI: розбір відмови",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Підсумок",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI: розбір відмови",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: розбір відмови": {
+      "main": [
+        [
+          {
+            "node": "Записати розбір",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Записати розбір": {
+      "main": [
+        [
+          {
+            "node": "Вакансії: записати AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Вакансії: записати AI": {
+      "main": [
+        [
+          {
+            "node": "Підсумок",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Підсумок": {
+      "main": [
+        [
+          {
+            "node": "Куди",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Куди": {
+      "main": [
+        [
+          {
+            "node": "Telegram API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI: спільні патерни",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (висновки)": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI: спільні патерни",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: спільні патерни": {
+      "main": [
+        [
+          {
+            "node": "Висновки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Висновки": {
+      "main": [
+        [
+          {
+            "node": "Telegram API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Kyiv",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "jtErrorHandler01"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

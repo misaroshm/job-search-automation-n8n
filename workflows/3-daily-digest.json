@@ -1,0 +1,324 @@
+{
+  "id": "jtDailyDigest001",
+  "name": "3 · Ранкове зведення",
+  "active": true,
+  "nodes": [
+    {
+      "id": "cb07bc81-be56-444d-a4b2-f6a48a8272d9",
+      "name": "Щодня о 9:05",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 9 * * *"
+            }
+          ]
+        },
+        "misfirePolicy": "coalesce"
+      }
+    },
+    {
+      "id": "2950a1aa-d281-4cfd-a14b-1c7ad54881cc",
+      "name": "Виклик з бота",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "ee9bf126-3cd0-4b69-ad80-fae0526c88b8",
+      "name": "Вакансії: прочитати",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        240,
+        100
+      ],
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Вакансії"
+        },
+        "operation": "read",
+        "filtersUI": {},
+        "options": {
+          "outputFormatting": {
+            "values": {
+              "general": "FORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleApi": {
+          "id": "jtSheetsSA000001",
+          "name": "Google Sheets (service account)"
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "eaad6237-d392-4d8a-a646-e860e13fe8ee",
+      "name": "Зведення",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/digest/digest.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Morning summary: overdue next steps, steps due today/tomorrow, applications\n// that have not moved for a while. Applications with no answer for GHOST_DAYS\n// are moved to \"Немає відповіді\" automatically.\n// Output kinds: updMain, hist, tg.\n\nconst STALE_DAYS = Number($env.STALE_DAYS || 7);\nconst GHOST_DAYS = Number($env.GHOST_DAYS || 21);\n\nconst rows = rowsOf('Вакансії: прочитати').filter((r) => r[COL.COMPANY]);\nconst today = todayISO();\nconst overdue = [], due = [], stale = [], ghosted = [], out = [];\nconst counts = {};\n\nfor (const r of rows) {\n  const stage = r[COL.STAGE] || '';\n  counts[stage] = (counts[stage] || 0) + 1;\n  if (isClosed(stage)) continue;\n  const label = `${r[COL.COMPANY]} — ${r[COL.POSITION]}`;\n  const idle = daysBetween(parseDate(r[COL.STAGE_DATE]), today);\n\n  if (GHOST_DAYS > 0 && stage === 'Відгукнулась' && idle !== null && idle >= GHOST_DAYS) {\n    out.push({ json: { kind: 'updMain', row_number: r.row_number, [COL.STAGE]: 'Немає відповіді', [COL.STAGE_DATE]: today } });\n    out.push({ json: { kind: 'hist', 'Коли': nowStamp(), 'Компанія': r[COL.COMPANY], 'Позиція': r[COL.POSITION], 'Було': stage, 'Стало': 'Немає відповіді (авто)' } });\n    ghosted.push(label);\n    continue;\n  }\n\n  const next = parseDate(r[COL.NEXT_DATE]);\n  const step = r[COL.NEXT] || 'наступний крок';\n  if (next) {\n    const d = daysBetween(today, next);\n    if (d < 0) overdue.push(`${label}: ${step} (було ${fmtDate(next)})`);\n    else if (d <= 1) due.push(`${label}: ${step} — ${d === 0 ? 'сьогодні' : 'завтра'}`);\n  }\n  if (idle !== null && idle >= STALE_DAYS) stale.push(`${label} (${stage || 'без етапу'}, ${idle} дн.)`);\n}\n\nconst block = (t, items) => (items.length ? `\\n<b>${t}</b>\\n` + items.map((x) => '• ' + esc(x)).join('\\n') + '\\n' : '');\nlet text = block('🔴 Прострочено', overdue) + block('🟡 На сьогодні і завтра', due) +\n  block('⏳ Давно без руху', stale) + block('👻 Перевела в \"Немає відповіді\"', ghosted);\nif (!text) text = '\\nНічого термінового, все під контролем.\\n';\n\nconst active = rows.filter((r) => !isClosed(r[COL.STAGE]) && r[COL.STAGE] !== 'Хочу відгукнутись').length;\nconst wish = counts['Хочу відгукнутись'] || 0;\ntext += `\\nУ процесі: ${active}` + (wish ? ` · чекають відгуку: ${wish}` : '');\n\nconst sheetUrl = `https://docs.google.com/spreadsheets/d/${$env.SHEET_ID}/edit`;\nout.push(sendText(`🗓 <b>Вакансії на ${fmtDate(today)}</b>\\n${text}\\n\\n<a href=\"${sheetUrl}\">Відкрити таблицю</a>`));\nreturn out;\n"
+      }
+    },
+    {
+      "id": "caf743fb-de2e-42b4-a747-29fd20e71ec9",
+      "name": "Дії",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        720,
+        100
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{ [\"updMain\",\"hist\",\"tg\"].indexOf($json.kind) }}"
+      }
+    },
+    {
+      "id": "f3437dba-83be-49a6-a615-02b639dbf804",
+      "name": "Вакансії: оновити",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        960,
+        -60
+      ],
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Вакансії"
+        },
+        "operation": "update",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt"
+        }
+      },
+      "credentials": {
+        "googleApi": {
+          "id": "jtSheetsSA000001",
+          "name": "Google Sheets (service account)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "b0ce5b6a-e5f0-4944-a36c-a42cf5f44d06",
+      "name": "Історія: додати",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        960,
+        100
+      ],
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Історія"
+        },
+        "operation": "append",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt"
+        }
+      },
+      "credentials": {
+        "googleApi": {
+          "id": "jtSheetsSA000001",
+          "name": "Google Sheets (service account)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "06fda5fa-8f73-47b2-aa0b-b11737f45576",
+      "name": "Telegram API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        960,
+        260
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.method }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 60
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Щодня о 9:05": {
+      "main": [
+        [
+          {
+            "node": "Вакансії: прочитати",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Виклик з бота": {
+      "main": [
+        [
+          {
+            "node": "Вакансії: прочитати",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Вакансії: прочитати": {
+      "main": [
+        [
+          {
+            "node": "Зведення",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Зведення": {
+      "main": [
+        [
+          {
+            "node": "Дії",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Дії": {
+      "main": [
+        [
+          {
+            "node": "Вакансії: оновити",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Історія: додати",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Kyiv",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "jtErrorHandler01"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

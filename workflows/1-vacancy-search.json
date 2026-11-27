@@ -1,0 +1,600 @@
+{
+  "id": "jtVacancySearch1",
+  "name": "1 · Пошук вакансій (DOU + Djinni + AI)",
+  "active": true,
+  "nodes": [
+    {
+      "id": "4c4e8860-5b54-427a-ab03-5692fb0794bf",
+      "name": "Щодня о 9:00 і 19:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9,19 * * *"
+            }
+          ]
+        },
+        "misfirePolicy": "coalesce"
+      }
+    },
+    {
+      "id": "20aaa821-376a-45cc-a029-a44436218b0b",
+      "name": "Виклик з бота",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "inputSource": "passthrough"
+      }
+    },
+    {
+      "id": "7ede36e3-33ea-41aa-a4bc-e20266ab24ff",
+      "name": "Стрічки",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/search/feeds.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// From config/profile.json\nconst CONFIG = {\n  \"candidate_profile\": [\n    \"Candidate: entry-level (trainee / intern / junior), no commercial experience yet.\",\n    \"Based in Lviv, Ukraine; open to remote, hybrid or on-site in Lviv.\",\n    \"Interests: project management / coordination, no-code & AI automation (n8n, Apps Script, APIs),\",\n    \"user acquisition / performance marketing, business or data analysis, manual QA.\",\n    \"Skills: SQL, Postman / REST APIs, Jira, Python (intermediate), Google Sheets & Apps Script,\",\n    \"n8n, Telegram bots. English B2. Master's in Computer Science (graduating Dec 2026).\",\n    \"Not interested in: software development, design, sales-only roles, customer support.\"\n  ],\n  \"feeds\": {\n    \"dou_searches\": [\n      \"trainee\",\n      \"intern\",\n      \"стажер\",\n      \"junior\",\n      \"project manager\",\n      \"project coordinator\",\n      \"delivery coordinator\",\n      \"business analyst\",\n      \"technical analyst\",\n      \"data analyst\",\n      \"manual qa\",\n      \"qa engineer\",\n      \"n8n\",\n      \"automation specialist\",\n      \"martech\",\n      \"pre-sale\",\n      \"user acquisition\"\n    ],\n    \"djinni_categories\": [\n      \"\",\n      \"Project Manager\",\n      \"Business Analyst\",\n      \"QA\",\n      \"Data Analyst\",\n      \"Marketing\"\n    ]\n  },\n  \"scoring\": {\n    \"boost\": [\n      {\n        \"pattern\": \"trainee|intern|стажер|стажув|junior|джуніор|entry\",\n        \"points\": 4\n      },\n      {\n        \"pattern\": \"project manager|project coordinator|\\\\bpm\\\\b|delivery|coordinator|координатор\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"business analyst|\\\\bba\\\\b|technical analyst|data analyst|analyst|аналітик\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"manual qa|\\\\bqa\\\\b|tester|тестувальник\",\n        \"points\": 2\n      },\n      {\n        \"pattern\": \"n8n|make\\\\.com|zapier|no-code|low-code|martech|automation|автоматизац\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"user acquisition|\\\\bua\\\\b|media buy|pre-?sale|tender\",\n        \"points\": 2\n      },\n      {\n        \"pattern\": \"\\\\bsql\\\\b|postman|\\\\bjira\\\\b|python|\\\\bapi\\\\b\",\n        \"points\": 1\n      }\n    ],\n    \"penalty\": [\n      {\n        \"pattern\": \"senior|middle|сеньйор|principal|architect|director|head of\",\n        \"points\": -6\n      },\n      {\n        \"pattern\": \"\\\\blead\\\\b(?!\\\\s*gen)|team ?lead|тімлід\",\n        \"points\": -6\n      },\n      {\n        \"pattern\": \"developer|розробник|devops|designer|дизайнер|data scientist|ml engineer|software engineer\",\n        \"points\": -8\n      },\n      {\n        \"pattern\": \"support|підтримк|night shift\",\n        \"points\": -3\n      }\n    ],\n    \"preferred_location\": {\n      \"pattern\": \"львів|lviv|віддалено|remote|зимна вода\",\n      \"points\": 2\n    }\n  }\n};\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Builds the list of RSS feeds to check. One output item = one HTTP request.\n\n// Search terms and categories come from config/profile.json\nconst DOU_SEARCHES = CONFIG.feeds.dou_searches;\n// Djinni: \"no experience\" feed, plus a few categories ('' = all categories)\nconst DJINNI_CATEGORIES = CONFIG.feeds.djinni_categories;\n\nconst out = [];\nfor (const q of DOU_SEARCHES) {\n  out.push({ json: {\n    source: 'DOU',\n    url: 'https://jobs.dou.ua/vacancies/feeds/?exp=0-1&search=' + encodeURIComponent(q),\n  } });\n}\nfor (const c of DJINNI_CATEGORIES) {\n  out.push({ json: {\n    source: 'Djinni',\n    url: 'https://djinni.co/jobs/rss/?exp_level=no_exp' + (c ? '&primary_keyword=' + encodeURIComponent(c) : ''),\n  } });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "3948110e-c3aa-410a-a99c-3825ceac4928",
+      "name": "Завантажити RSS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        480,
+        100
+      ],
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (compatible; job-tracker/1.0)"
+            }
+          ]
+        },
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 6,
+              "batchInterval": 300
+            }
+          },
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data",
+              "neverError": true
+            }
+          },
+          "timeout": 20000
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "2232ee91-3439-4098-a6bf-971f2f84e4f5",
+      "name": "Розібрати й оцінити",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/search/parse-score.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// From config/profile.json\nconst CONFIG = {\n  \"candidate_profile\": [\n    \"Candidate: entry-level (trainee / intern / junior), no commercial experience yet.\",\n    \"Based in Lviv, Ukraine; open to remote, hybrid or on-site in Lviv.\",\n    \"Interests: project management / coordination, no-code & AI automation (n8n, Apps Script, APIs),\",\n    \"user acquisition / performance marketing, business or data analysis, manual QA.\",\n    \"Skills: SQL, Postman / REST APIs, Jira, Python (intermediate), Google Sheets & Apps Script,\",\n    \"n8n, Telegram bots. English B2. Master's in Computer Science (graduating Dec 2026).\",\n    \"Not interested in: software development, design, sales-only roles, customer support.\"\n  ],\n  \"feeds\": {\n    \"dou_searches\": [\n      \"trainee\",\n      \"intern\",\n      \"стажер\",\n      \"junior\",\n      \"project manager\",\n      \"project coordinator\",\n      \"delivery coordinator\",\n      \"business analyst\",\n      \"technical analyst\",\n      \"data analyst\",\n      \"manual qa\",\n      \"qa engineer\",\n      \"n8n\",\n      \"automation specialist\",\n      \"martech\",\n      \"pre-sale\",\n      \"user acquisition\"\n    ],\n    \"djinni_categories\": [\n      \"\",\n      \"Project Manager\",\n      \"Business Analyst\",\n      \"QA\",\n      \"Data Analyst\",\n      \"Marketing\"\n    ]\n  },\n  \"scoring\": {\n    \"boost\": [\n      {\n        \"pattern\": \"trainee|intern|стажер|стажув|junior|джуніор|entry\",\n        \"points\": 4\n      },\n      {\n        \"pattern\": \"project manager|project coordinator|\\\\bpm\\\\b|delivery|coordinator|координатор\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"business analyst|\\\\bba\\\\b|technical analyst|data analyst|analyst|аналітик\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"manual qa|\\\\bqa\\\\b|tester|тестувальник\",\n        \"points\": 2\n      },\n      {\n        \"pattern\": \"n8n|make\\\\.com|zapier|no-code|low-code|martech|automation|автоматизац\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"user acquisition|\\\\bua\\\\b|media buy|pre-?sale|tender\",\n        \"points\": 2\n      },\n      {\n        \"pattern\": \"\\\\bsql\\\\b|postman|\\\\bjira\\\\b|python|\\\\bapi\\\\b\",\n        \"points\": 1\n      }\n    ],\n    \"penalty\": [\n      {\n        \"pattern\": \"senior|middle|сеньйор|principal|architect|director|head of\",\n        \"points\": -6\n      },\n      {\n        \"pattern\": \"\\\\blead\\\\b(?!\\\\s*gen)|team ?lead|тімлід\",\n        \"points\": -6\n      },\n      {\n        \"pattern\": \"developer|розробник|devops|designer|дизайнер|data scientist|ml engineer|software engineer\",\n        \"points\": -8\n      },\n      {\n        \"pattern\": \"support|підтримк|night shift\",\n        \"points\": -3\n      }\n    ],\n    \"preferred_location\": {\n      \"pattern\": \"львів|lviv|віддалено|remote|зимна вода\",\n      \"points\": 2\n    }\n  }\n};\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Parses every RSS response, scores each vacancy with keyword rules and keeps\n// the ones above the threshold. Always returns exactly one item:\n// { candidates: [...], feedsOk, feedsFailed, seen }\n\nconst MIN_SCORE = Number($env.MIN_SCORE || 15);\n\n// Keyword rules come from config/profile.json (CONFIG is injected by the build).\n// Points: boosts count x2 in the title and x1 in the description; penalties apply to the title only.\nconst rule = (r) => [new RegExp(r.pattern, 'i'), Number(r.points)];\nconst GOOD = CONFIG.scoring.boost.map(rule);\nconst BAD = CONFIG.scoring.penalty.map(rule);\nconst [GOOD_PLACE, PLACE_POINTS] = rule(CONFIG.scoring.preferred_location);\n// \"1+ year\", \"від року\", \"2 years of experience\" ... => not for a trainee.\n// The `u` flag and explicit letter lookarounds are needed because JS `\\b`\n// does not treat Cyrillic as word characters.\n// A bare \"5 years\" / \"5 років\" only counts next to an experience word, so\n// \"5 years on the market\" or \"працюємо 5 років\" do not drop a vacancy.\nconst EXP_BAD = (() => {\n  const B = '(?<![\\\\p{L}\\\\d])';\n  const E = '(?![\\\\p{L}\\\\d])';\n  const NUM = '(?:[1-9]\\\\d?|one|two|three|four|five|одного|двох|трьох|чотирьох|п\\'яти)';\n  const UNIT = '(?:years?|yrs?|рік|року|роки|років|год|года|лет)';\n  const EXP = '(?:experience|досвід\\\\p{L}*|опыт\\\\p{L}*|стаж\\\\p{L}*)';\n  const GAP = '[^.;!?\\\\n]{0,40}?';\n  return new RegExp([\n    // explicit plus: \"1+ year\", \"2+ роки\"\n    `${B}${NUM}\\\\s*\\\\+\\\\s*${UNIT}${E}`,\n    // \"від року\", \"від 2 років\", \"at least 1 year\", \"не менше двох років\"\n    `${B}(?:від|от|from|at least|minimum|min\\\\.?|не менше|не менее|мінімум|минимум)\\\\s+(?:${NUM}\\\\s*)?${UNIT}${E}`,\n    // \"2 years of experience\", \"досвід роботи 2 роки\"\n    `${B}${NUM}\\\\s*${UNIT}${E}${GAP}${EXP}`,\n    `${EXP}${GAP}${B}${NUM}\\\\s*${UNIT}${E}`,\n  ].join('|'), 'iu');\n})();\n\nfunction decode(s) {\n  return String(s || '')\n    .replace(/&#(\\d+);/g, (m, d) => String.fromCharCode(+d))\n    .replace(/&#x([0-9a-f]+);/gi, (m, h) => String.fromCharCode(parseInt(h, 16)))\n    .replace(/&quot;/g, '\"').replace(/&apos;/g, \"'\").replace(/&#39;/g, \"'\").replace(/&nbsp;/g, ' ')\n    .replace(/&laquo;/g, '«').replace(/&raquo;/g, '»').replace(/&mdash;/g, '—').replace(/&ndash;/g, '–')\n    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');\n}\n\nfunction plain(html) {\n  return decode(String(html || '').replace(/<[^>]+>/g, ' ')).replace(/\\s+/g, ' ').trim();\n}\n\nfunction tag(block, name) {\n  const m = block.match(new RegExp('<' + name + '(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)</' + name + '>', 'i'));\n  if (!m) return '';\n  const v = m[1].trim();\n  const c = v.match(/^<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>$/);\n  return c ? c[1] : decode(v);\n}\n\nfunction parseRss(xml) {\n  const items = [];\n  const re = /<item(?:\\s[^>]*)?>([\\s\\S]*?)<\\/item>/gi;\n  let m;\n  while ((m = re.exec(String(xml || '')))) {\n    items.push({ title: tag(m[1], 'title'), link: tag(m[1], 'link'), html: tag(m[1], 'description') });\n  }\n  return items;\n}\n\n// \"Trainee QA в Nordlight, Львів, віддалено, $200–400\"\nfunction fromDou(x) {\n  const out = { source: 'DOU', url: x.link.split('?')[0], text: plain(x.html), company: '', location: '', salary: '' };\n  const t = plain(x.title);\n  const i = t.lastIndexOf(' в ');\n  if (i === -1) { out.title = t; return out; }\n  out.title = t.slice(0, i).trim();\n  const parts = t.slice(i + 3).split(',').map((s) => s.trim()).filter(Boolean);\n  out.company = parts.shift() || '';\n  const money = parts.filter((p) => /[$€]|грн|uah/i.test(p));\n  out.salary = money.join(', ');\n  out.location = parts.filter((p) => money.indexOf(p) === -1).join(', ');\n  return out;\n}\n\n// Djinni has no company field: it is usually in bold at the start of the description\nfunction fromDjinni(x) {\n  const out = { source: 'Djinni', url: x.link, title: plain(x.title), text: plain(x.html), company: '', location: '', salary: '' };\n  const b = String(x.html).match(/<(?:b|strong)>([^<]{2,40})<\\/(?:b|strong)>/i);\n  if (b) out.company = decode(b[1]).trim().replace(/[:.]$/, '');\n  const place = out.text.match(/віддалено|remote|львів|lviv|київ|kyiv/gi) || [];\n  out.location = place.filter((p, i, a) => a.findIndex((q) => q.toLowerCase() === p.toLowerCase()) === i).slice(0, 3).join(', ');\n  return out;\n}\n\nfunction score(v) {\n  const title = v.title || '';\n  const desc = v.text || '';\n  if (EXP_BAD.test(title + ' ' + desc)) return -99;\n  let s = 0;\n  for (const [re, w] of GOOD) {\n    if (re.test(title)) s += w * 2;\n    if (re.test(desc)) s += w;\n  }\n  for (const [re, w] of BAD) if (re.test(title)) s += w;\n  if (GOOD_PLACE.test(title + ' ' + v.location + ' ' + desc)) s += PLACE_POINTS;\n  return s;\n}\n\nlet feedsOk = 0, feedsFailed = 0, seen = 0;\nconst byKey = {};\nfor (const item of $input.all()) {\n  const xml = item.json.data;\n  if (typeof xml !== 'string' || xml.indexOf('<item') === -1) { feedsFailed++; continue; }\n  feedsOk++;\n  for (const x of parseRss(xml)) {\n    if (!x.link) continue;\n    seen++;\n    const v = /djinni\\.co/i.test(x.link) ? fromDjinni(x) : fromDou(x);\n    const key = urlKey(v.url);\n    if (byKey[key]) continue;\n    v.score = score(v);\n    if (v.score >= MIN_SCORE) byKey[key] = v;\n  }\n}\n\nconst candidates = Object.values(byKey).sort((a, b) => b.score - a.score);\nreturn [{ json: { candidates, feedsOk, feedsFailed, seen } }];\n"
+      }
+    },
+    {
+      "id": "fdae3e99-c0f8-42a7-a45a-80a152c2d899",
+      "name": "Знайдені: прочитати",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        960,
+        100
+      ],
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Знайдені"
+        },
+        "operation": "read",
+        "filtersUI": {},
+        "options": {
+          "outputFormatting": {
+            "values": {
+              "general": "FORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleApi": {
+          "id": "jtSheetsSA000001",
+          "name": "Google Sheets (service account)"
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "9cab1137-f3c1-48e5-a460-cedd58984ea5",
+      "name": "Вакансії: прочитати",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1200,
+        100
+      ],
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Вакансії"
+        },
+        "operation": "read",
+        "filtersUI": {},
+        "options": {
+          "outputFormatting": {
+            "values": {
+              "general": "FORMATTED_VALUE",
+              "date": "FORMATTED_STRING"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleApi": {
+          "id": "jtSheetsSA000001",
+          "name": "Google Sheets (service account)"
+        }
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "1fea0465-586e-4360-acf8-4774adbf9b06",
+      "name": "Лише нові",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        100
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/search/only-new.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// From config/profile.json\nconst CONFIG = {\n  \"candidate_profile\": [\n    \"Candidate: entry-level (trainee / intern / junior), no commercial experience yet.\",\n    \"Based in Lviv, Ukraine; open to remote, hybrid or on-site in Lviv.\",\n    \"Interests: project management / coordination, no-code & AI automation (n8n, Apps Script, APIs),\",\n    \"user acquisition / performance marketing, business or data analysis, manual QA.\",\n    \"Skills: SQL, Postman / REST APIs, Jira, Python (intermediate), Google Sheets & Apps Script,\",\n    \"n8n, Telegram bots. English B2. Master's in Computer Science (graduating Dec 2026).\",\n    \"Not interested in: software development, design, sales-only roles, customer support.\"\n  ],\n  \"feeds\": {\n    \"dou_searches\": [\n      \"trainee\",\n      \"intern\",\n      \"стажер\",\n      \"junior\",\n      \"project manager\",\n      \"project coordinator\",\n      \"delivery coordinator\",\n      \"business analyst\",\n      \"technical analyst\",\n      \"data analyst\",\n      \"manual qa\",\n      \"qa engineer\",\n      \"n8n\",\n      \"automation specialist\",\n      \"martech\",\n      \"pre-sale\",\n      \"user acquisition\"\n    ],\n    \"djinni_categories\": [\n      \"\",\n      \"Project Manager\",\n      \"Business Analyst\",\n      \"QA\",\n      \"Data Analyst\",\n      \"Marketing\"\n    ]\n  },\n  \"scoring\": {\n    \"boost\": [\n      {\n        \"pattern\": \"trainee|intern|стажер|стажув|junior|джуніор|entry\",\n        \"points\": 4\n      },\n      {\n        \"pattern\": \"project manager|project coordinator|\\\\bpm\\\\b|delivery|coordinator|координатор\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"business analyst|\\\\bba\\\\b|technical analyst|data analyst|analyst|аналітик\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"manual qa|\\\\bqa\\\\b|tester|тестувальник\",\n        \"points\": 2\n      },\n      {\n        \"pattern\": \"n8n|make\\\\.com|zapier|no-code|low-code|martech|automation|автоматизац\",\n        \"points\": 3\n      },\n      {\n        \"pattern\": \"user acquisition|\\\\bua\\\\b|media buy|pre-?sale|tender\",\n        \"points\": 2\n      },\n      {\n        \"pattern\": \"\\\\bsql\\\\b|postman|\\\\bjira\\\\b|python|\\\\bapi\\\\b\",\n        \"points\": 1\n      }\n    ],\n    \"penalty\": [\n      {\n        \"pattern\": \"senior|middle|сеньйор|principal|architect|director|head of\",\n        \"points\": -6\n      },\n      {\n        \"pattern\": \"\\\\blead\\\\b(?!\\\\s*gen)|team ?lead|тімлід\",\n        \"points\": -6\n      },\n      {\n        \"pattern\": \"developer|розробник|devops|designer|дизайнер|data scientist|ml engineer|software engineer\",\n        \"points\": -8\n      },\n      {\n        \"pattern\": \"support|підтримк|night shift\",\n        \"points\": -3\n      }\n    ],\n    \"preferred_location\": {\n      \"pattern\": \"львів|lviv|віддалено|remote|зимна вода\",\n      \"points\": 2\n    }\n  }\n};\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Drops vacancies that are already in \"Знайдені\" or \"Вакансії\" and prepares\n// the text for the AI check. route 0 = new vacancies, route 1 = nothing new.\n\nconst MAX_AI_CHECKS = Number($env.MAX_AI_CHECKS || 20);\n\n// Who the AI is matching vacancies against: config/profile.json\nconst PROFILE = CONFIG.candidate_profile.join('\\n');\n\nconst res = $('Розібрати й оцінити').first().json;\nconst known = new Set();\nfor (const r of rowsOf('Знайдені: прочитати')) known.add(urlKey(r[IN.LINK]));\nfor (const r of rowsOf('Вакансії: прочитати')) known.add(urlKey(r[COL.LINK]));\n\nconst fresh = (res.candidates || []).filter((c) => !known.has(urlKey(c.url)));\nconst stats = { feedsOk: res.feedsOk, feedsFailed: res.feedsFailed, seen: res.seen, alreadyKnown: (res.candidates || []).length - fresh.length };\n\nif (!fresh.length) return [{ json: Object.assign({ route: 1 }, stats) }];\n\nreturn fresh.slice(0, MAX_AI_CHECKS).map((c) => ({\n  json: Object.assign({ route: 0 }, c, {\n    stats,\n    aiText: [\n      'CANDIDATE PROFILE:', PROFILE, '',\n      'VACANCY:',\n      'Title: ' + c.title,\n      'Company: ' + (c.company || 'unknown'),\n      'Location: ' + (c.location || 'not stated'),\n      'Description: ' + String(c.text || '').slice(0, 3500),\n    ].join('\\n'),\n  }),\n}));\n"
+      }
+    },
+    {
+      "id": "1c687e70-4555-4ac6-aa57-04f3c6c34fff",
+      "name": "Є нові?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        1680,
+        100
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.route }}"
+      }
+    },
+    {
+      "id": "7614ba8f-975a-4d9b-a6c8-856df737c42b",
+      "name": "AI: чи підходить",
+      "type": "@n8n/n8n-nodes-langchain.informationExtractor",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        0
+      ],
+      "parameters": {
+        "text": "={{ $json.aiText }}",
+        "schemaType": "manual",
+        "inputSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"fit\": {\n      \"type\": \"boolean\",\n      \"description\": \"Is this a realistic, relevant role for the candidate?\"\n    },\n    \"requires_experience\": {\n      \"type\": \"boolean\",\n      \"description\": \"true only if the vacancy explicitly requires 1+ year of commercial experience\"\n    },\n    \"why\": {\n      \"type\": \"string\",\n      \"description\": \"One short sentence in Ukrainian (max 15 words): why it fits or not\"\n    }\n  },\n  \"required\": [\n    \"fit\",\n    \"requires_experience\",\n    \"why\"\n  ]\n}",
+        "options": {
+          "systemPromptTemplate": "You screen job vacancies for one specific entry-level candidate.\nDecide whether the vacancy is a realistic match for the candidate profile given in the text.\nRules:\n- \"requires_experience\" is true only when the vacancy clearly asks for 1 year or more of commercial experience. \"Experience is a plus\" or internships do not count.\n- \"fit\" is false for software development, design, pure sales or customer support roles, and for anything the profile says is not interesting.\n- Write \"why\" in Ukrainian, plain and specific, no more than 15 words.\nOnly extract the requested fields.",
+          "batching": {
+            "batchSize": 2,
+            "delayBetweenBatches": 13000
+          }
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "79895f8f-7221-4d23-a13b-d22cd66ae627",
+      "name": "Gemini",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1920,
+        220
+      ],
+      "parameters": {
+        "modelName": "={{ $env.GEMINI_MODEL || \"models/gemini-3.5-flash-lite\" }}",
+        "options": {
+          "temperature": 0.2,
+          "maxOutputTokens": 2048
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "jtGeminiCred0001",
+          "name": "Google Gemini"
+        }
+      }
+    },
+    {
+      "id": "c279277d-5898-4955-ac33-84800538a02a",
+      "name": "Готові картки",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/search/cards.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Combines the keyword score with the AI verdict.\n// Every checked vacancy is saved to \"Знайдені\" (so it is never checked twice);\n// the ones that fit are also sent to Telegram as cards with Add / Skip buttons.\n// Output items: kind 'inbox' (row to append) or kind 'tg' (Telegram call).\n\nconst MAX_CARDS = Number($env.MAX_CARDS || 15);\n\nconst src = $('Лише нові').all().map((i) => i.json);\nconst ai = $input.all().map((i) => i.json);\nconst stamp = nowStamp();\n\nconst rows = [];\nconst good = [];\nlet rejectedByAi = 0;\n\nsrc.forEach((v, i) => {\n  const r = ai[i] || {};\n  const out = r.output || null;           // null = AI step failed, keep the keyword verdict\n  const fits = !out || (out.fit !== false && out.requires_experience !== true);\n  const comment = out ? String(out.why || '').trim() : 'AI недоступний, відібрано за ключовими словами';\n  if (!fits) rejectedByAi++;\n  rows.push({ json: {\n    kind: 'inbox',\n    [IN.FOUND]: stamp,\n    [IN.SCORE]: v.score,\n    [IN.COMPANY]: v.company || '(уточнити)',\n    [IN.POSITION]: v.title,\n    [IN.LOCATION]: v.location || '',\n    [IN.SALARY]: v.salary || '',\n    [IN.SOURCE]: v.source,\n    [IN.LINK]: v.url,\n    [IN.STATUS]: fits ? 'Нова' : 'AI: не підходить',\n    [IN.AI]: comment,\n  } });\n  if (fits) good.push(Object.assign({}, v, { comment }));\n});\n\nconst stats = (src[0] && src[0].stats) || {};\nconst msgs = [];\nif (!good.length) {\n  msgs.push(sendText('🔎 Нових вакансій немає.\\n' +\n    `Переглянуто ${stats.seen || 0} у ${stats.feedsOk || 0} стрічках, AI відсіяв ${rejectedByAi}.`));\n} else {\n  msgs.push(sendText(`🔎 <b>Нових вакансій: ${good.length}</b>` +\n    (rejectedByAi ? `\\nAI відсіяв ще ${rejectedByAi} (просять досвід або не твій профіль)` : '') +\n    (good.length > MAX_CARDS ? `\\nПоказую ${MAX_CARDS} найкращих, решта в /inbox` : '')));\n  for (const v of good.slice(0, MAX_CARDS)) msgs.push(inboxCard(v));\n}\n\nreturn rows.concat(msgs);\n\nfunction inboxCard(v) {\n  const meta = [v.location, v.salary].filter(Boolean).join(' · ');\n  const h = hash(urlKey(v.url));\n  return sendText(\n    `🆕 <b>${esc(v.company || '(уточнити)')}</b> — ${esc(v.title)}` +\n    (meta ? `\\n📍 ${esc(meta)}` : '') +\n    `\\n⭐ бал ${v.score} · ${esc(v.source)}` +\n    (v.comment ? `\\n🤖 ${esc(v.comment)}` : ''),\n    { reply_markup: { inline_keyboard: [\n      [{ text: '➕ Додати', callback_data: 'a:' + h }, { text: '✖ Пропустити', callback_data: 'x:' + h }],\n      [{ text: 'Відкрити вакансію', url: v.url }],\n    ] } },\n  );\n}\n"
+      }
+    },
+    {
+      "id": "e6d1ec89-d88f-4f73-ac42-6f01363ee1da",
+      "name": "Рядки чи повідомлення",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        2440,
+        0
+      ],
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.kind === \"tg\" ? 1 : 0 }}"
+      }
+    },
+    {
+      "id": "3fda764b-d37f-49e1-a243-d0f8a91813ab",
+      "name": "Без службових полів",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2680,
+        -100
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/search/strip-kind.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Removes the routing field so the Sheets node only sees real columns\n// (it creates missing columns such as \"AI-коментар\" automatically).\nreturn $input.all().map((i) => {\n  const j = Object.assign({}, i.json);\n  delete j.kind;\n  return { json: j };\n});\n"
+      }
+    },
+    {
+      "id": "89be7fe8-1f14-4163-a178-6503d55be904",
+      "name": "Знайдені: додати",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2920,
+        -100
+      ],
+      "parameters": {
+        "authentication": "serviceAccount",
+        "resource": "sheet",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.SHEET_ID }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Знайдені"
+        },
+        "operation": "append",
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "handlingExtraData": "insertInNewColumn"
+        }
+      },
+      "credentials": {
+        "googleApi": {
+          "id": "jtSheetsSA000001",
+          "name": "Google Sheets (service account)"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "7d9f7904-c781-4003-ab81-13b8859c6d69",
+      "name": "Нічого нового",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Source: src/code/search/nothing-new.js (+ src/lib/common.js). Edit there and run scripts/build.js.\n\n// ---------------------------------------------------------------------------\n// Shared helpers. The build script prepends this file to every Code node,\n// so each node stays self-contained inside n8n.\n// ---------------------------------------------------------------------------\n\nconst TZ = 'Europe/Kyiv';\n\nconst SHEET = {\n  MAIN: 'Вакансії',\n  INBOX: 'Знайдені',\n  HISTORY: 'Історія',\n};\n\n// Column names in the \"Вакансії\" sheet (must match the header row exactly)\nconst COL = {\n  APPLIED: 'Дата відгуку',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LINK: 'Посилання',\n  SOURCE: 'Джерело',\n  FORMAT: 'Формат',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  STAGE: 'Етап',\n  STAGE_DATE: 'Етап змінено',\n  NEXT: 'Наступний крок',\n  NEXT_DATE: 'Дата наступного кроку',\n  REASON: 'Причина відмови',\n  CONTACT: 'Контакт',\n  PRIORITY: 'Пріоритет',\n  NOTES: 'Нотатки',\n  AI_REASON: 'AI: причина',\n  AI_GAPS: 'AI: чого бракувало',\n  AI_ADVICE: 'AI: що підтягнути',\n  AI_ACTION: 'AI: наступний крок',\n};\n\n// Column names in the \"Знайдені\" sheet\nconst IN = {\n  FOUND: 'Знайдено',\n  SCORE: 'Бал',\n  COMPANY: 'Компанія',\n  POSITION: 'Позиція',\n  LOCATION: 'Локація',\n  SALARY: 'Зарплата',\n  SOURCE: 'Джерело',\n  LINK: 'Посилання',\n  STATUS: 'Статус',\n  AI: 'AI-коментар',\n};\n\nconst STAGES = [\n  'Хочу відгукнутись', 'Відгукнулась', 'Контакт з рекрутером', \"HR-інтерв'ю\",\n  'Тестове', \"Технічне інтерв'ю\", \"Фінальне інтерв'ю\", 'Офер',\n  'Відмова', 'Відмовилась сама', 'Немає відповіді',\n];\nconst CLOSED = ['Офер', 'Відмова', 'Відмовилась сама', 'Немає відповіді'];\n\nconst REASONS = [\n  'Мало досвіду', 'Не пройшла тестове', 'Обрали іншого кандидата', 'Слабка англійська',\n  'Не підійшла по софт-скілах', 'Вакансію закрили', 'Не зійшлись по зарплаті',\n  'Без пояснень', 'Моє рішення', 'Інше',\n];\n\n// Short, stable id for a row or a link (used in Telegram button data)\nfunction hash(s) {\n  let h = 0;\n  s = String(s);\n  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;\n  return (h >>> 0).toString(36);\n}\n\n// Normalised link: no protocol, www, query, fragment or trailing slash\nfunction urlKey(u) {\n  return String(u || '').trim().split('#')[0].split('?')[0]\n    .replace(/\\/$/, '').replace(/^https?:\\/\\/(www\\.)?/i, '').toLowerCase();\n}\n\n// Id of a vacancy row in the main sheet\nfunction rowKey(r) {\n  const k = urlKey(r[COL.LINK]);\n  return hash(k || (String(r[COL.COMPANY] || '') + '|' + String(r[COL.POSITION] || '')));\n}\n\nfunction esc(s) {\n  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction short(s, n) {\n  s = String(s == null ? '' : s);\n  return s.length > n ? s.slice(0, n - 1) + '…' : s;\n}\n\n// Date parts in Kyiv time\nfunction kyivParts(d) {\n  const f = new Intl.DateTimeFormat('en-GB', {\n    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',\n    hour: '2-digit', minute: '2-digit', hour12: false,\n  });\n  const p = {};\n  for (const x of f.formatToParts(d || new Date())) p[x.type] = x.value;\n  if (p.hour === '24') p.hour = '00';\n  return p;\n}\n\nfunction todayISO(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day}`;\n}\n\nfunction nowStamp(d) {\n  const p = kyivParts(d);\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\n}\n\nfunction fmtDate(iso) {\n  const m = String(iso || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || '');\n}\n\n// Sheet dates arrive as \"23.11.2026\", \"2026-11-23\" or a serial number.\n// Returns \"YYYY-MM-DD\" or \"\".\nfunction parseDate(v) {\n  if (v === null || v === undefined || v === '') return '';\n  if (typeof v === 'number') {\n    const ms = Math.round((v - 25569) * 86400000);\n    return new Date(ms).toISOString().slice(0, 10);\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{1,2})[./](\\d{1,2})[./](\\d{4})/);\n  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;\n  m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (m) return `${m[1]}-${m[2]}-${m[3]}`;\n  return '';\n}\n\n// Whole days between two \"YYYY-MM-DD\" dates (b - a)\nfunction daysBetween(a, b) {\n  if (!a || !b) return null;\n  return Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000);\n}\n\nfunction isClosed(stage) {\n  return CLOSED.indexOf(stage) !== -1;\n}\n\n// One Telegram Bot API call, executed later by the \"Telegram API\" HTTP node\nfunction tg(method, payload) {\n  return { json: { kind: 'tg', method, payload } };\n}\n\nfunction chatId() {\n  return String($env.TELEGRAM_CHAT_ID || '');\n}\n\nfunction sendText(text, extra) {\n  return tg('sendMessage', Object.assign({\n    chat_id: chatId(), text, parse_mode: 'HTML', disable_web_page_preview: true,\n  }, extra || {}));\n}\n\nfunction rowsOf(nodeName) {\n  try {\n    return $(nodeName).all().map((i) => i.json).filter((r) => r && r.row_number);\n  } catch (e) {\n    return [];\n  }\n}\n\n// ---------------------------------------------------------------------------\n\n// Nothing new after de-duplication: send a short confirmation so it is clear the search ran.\nconst s = $input.first().json;\nreturn [sendText(\n  '🔎 Нових вакансій немає.\\n' +\n  `Переглянуто ${s.seen || 0} у ${s.feedsOk || 0} стрічках` +\n  (s.alreadyKnown ? `, ${s.alreadyKnown} ти вже бачила` : '') +\n  (s.feedsFailed ? `\\n⚠️ Не відкрилось стрічок: ${s.feedsFailed}` : ''),\n)];\n"
+      }
+    },
+    {
+      "id": "7cfea453-b343-4926-a5ed-dbf59ac844aa",
+      "name": "Telegram API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2920,
+        200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.method }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 60
+            }
+          },
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Щодня о 9:00 і 19:00": {
+      "main": [
+        [
+          {
+            "node": "Стрічки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Виклик з бота": {
+      "main": [
+        [
+          {
+            "node": "Стрічки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Стрічки": {
+      "main": [
+        [
+          {
+            "node": "Завантажити RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Завантажити RSS": {
+      "main": [
+        [
+          {
+            "node": "Розібрати й оцінити",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Розібрати й оцінити": {
+      "main": [
+        [
+          {
+            "node": "Знайдені: прочитати",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Знайдені: прочитати": {
+      "main": [
+        [
+          {
+            "node": "Вакансії: прочитати",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Вакансії: прочитати": {
+      "main": [
+        [
+          {
+            "node": "Лише нові",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Лише нові": {
+      "main": [
+        [
+          {
+            "node": "Є нові?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Є нові?": {
+      "main": [
+        [
+          {
+            "node": "AI: чи підходить",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Нічого нового",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI: чи підходить",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI: чи підходить": {
+      "main": [
+        [
+          {
+            "node": "Готові картки",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Готові картки": {
+      "main": [
+        [
+          {
+            "node": "Рядки чи повідомлення",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Рядки чи повідомлення": {
+      "main": [
+        [
+          {
+            "node": "Без службових полів",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Без службових полів": {
+      "main": [
+        [
+          {
+            "node": "Знайдені: додати",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Нічого нового": {
+      "main": [
+        [
+          {
+            "node": "Telegram API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Kyiv",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "jtErrorHandler01"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
