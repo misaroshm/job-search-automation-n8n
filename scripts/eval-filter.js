@@ -21,13 +21,14 @@ const { FIT_SCHEMA, FIT_PROMPT } = require('./prompts');
 
 const ROOT = path.resolve(__dirname, '..');
 const CONFIG = JSON.parse(fs.readFileSync(process.env.PROFILE_FILE || path.join(ROOT, 'config/profile.json'), 'utf8'));
-const input = process.argv[2] || path.join(ROOT, 'private/eval/vacancies.json');
+const input = process.argv.slice(2).find((a) => !a.startsWith('--')) || path.join(ROOT, 'private/eval/vacancies.json');
 const cacheFile = path.join(path.dirname(input), 'cache.json');
 
 loadEnv(path.join(ROOT, '.env'));
 const KEY = process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || 'models/gemini-3.5-flash-lite';
-const DELAY_MS = Number(process.env.EVAL_DELAY_MS || 4500); // stays inside the free-tier rate limit
+const DELAY_MS = Number(process.env.EVAL_DELAY_MS || 4500);
+const REPORT_ONLY = process.argv.includes('--report-only'); // no new Gemini calls, report on what is cached // stays inside the free-tier rate limit
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
 
 // AI answers are cached per prompt + profile + model, so editing either re-asks Gemini
@@ -48,12 +49,12 @@ async function main() {
   let n = 0;
   for (const v of items) {
     n++;
-    if (cache.pages[v.url] === undefined) {
+    if (!REPORT_ONLY && cache.pages[v.url] === undefined) {
       cache.pages[v.url] = await fetchDescription(v.url);
       saveCache();
       await sleep(800);
     }
-    if (cache.ai[aiKey(v)] === undefined) {
+    if (!REPORT_ONLY && cache.ai[aiKey(v)] === undefined) {
       cache.ai[aiKey(v)] = await askGemini(aiText(v, cache.pages[v.url]));
       saveCache();
       process.stderr.write(`\r${n}/${items.length}`);
@@ -98,7 +99,7 @@ function aiText(v, description) {
 
 async function fetchDescription(url) {
   try {
-    const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow' });
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
     if (!res.ok) return '';
     const html = await res.text();
     // DOU: <div class="b-typo vacancy-section">, Djinni: <div class="... job-post__description">
@@ -139,8 +140,20 @@ async function askGemini(text) {
     generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: 'application/json', responseSchema: geminiSchema(FIT_SCHEMA) },
   };
   for (let attempt = 1; attempt <= 6; attempt++) {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': KEY }, body: JSON.stringify(body) });
-    if (res.status === 429 || res.status >= 500) { await sleep(15000 * attempt); continue; }
+    let res;
+    try {
+      // a hung request must not stall the whole run
+      res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': KEY }, body: JSON.stringify(body), signal: AbortSignal.timeout(45000) });
+    } catch (e) {
+      process.stderr.write(` [timeout, retry ${attempt}]`);
+      continue;
+    }
+    if (res.status === 429) {
+      const t = await res.text();
+      // The free tier has a daily request cap: waiting minutes will not help, so stop and keep the cache
+      if (/PerDay/i.test(t)) { console.error('\nGemini daily quota is used up. Answers so far are cached; run again after the quota resets.'); process.exit(2); }
+    }
+    if (res.status === 429 || res.status >= 500) { process.stderr.write(` [${res.status}, waiting]`); await sleep(15000 * attempt); continue; }
     const j = await res.json();
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${JSON.stringify(j.error || j).slice(0, 300)}`);
     try {
