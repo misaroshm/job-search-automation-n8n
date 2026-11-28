@@ -79,11 +79,18 @@ function fromDou(x) {
   return out;
 }
 
-// Djinni has no company field: it is usually in bold at the start of the description
+// Djinni has no company field. The real name is taken from the vacancy page later
+// ("Компанія зі сторінки"); this guess from the RSS is only a fallback: bold text
+// at the very start of the description, unless it is a section heading
+// ("About the Company", "Responsibilities:") or the job title itself.
+const NOT_COMPANY = /^(about|our |your |we |who |what |why |the |job|role|position|project|company|responsib|requirement|required|skills|qualif|benefit|offer|mission|vision|description|key |main |tasks?\b|duties|про |ми |наш|ваш|що |чому|обов|вимог|задач|пропону|компанія|проєкт|проект|опис|умови|ласкаво|шукаємо)/i;
 function fromDjinni(x) {
   const out = { source: 'Djinni', url: x.link, title: plain(x.title), text: plain(x.html), company: '', location: '', salary: '' };
-  const b = String(x.html).match(/<(?:b|strong)>([^<]{2,40})<\/(?:b|strong)>/i);
-  if (b) out.company = decode(b[1]).trim().replace(/[:.]$/, '');
+  const b = String(x.html).match(/^\s*(?:<p>\s*)?<(?:b|strong)>([^<]{2,40})<\/(?:b|strong)>/i);
+  const name = b ? decode(b[1]).replace(/^[^\p{L}\d]+/u, '').trim() : '';
+  if (name && !/:$/.test(name) && !NOT_COMPANY.test(name) && name.toLowerCase() !== out.title.toLowerCase()) {
+    out.company = name.replace(/[.]$/, '');
+  }
   const place = out.text.match(/віддалено|remote|львів|lviv|київ|kyiv/gi) || [];
   out.location = place.filter((p, i, a) => a.findIndex((q) => q.toLowerCase() === p.toLowerCase()) === i).slice(0, 3).join(', ');
   return out;

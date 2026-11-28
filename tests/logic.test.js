@@ -108,7 +108,7 @@ test('cards: AI verdict decides status; every checked vacancy is saved', async (
     { output: { fit: true, requires_experience: true, why: 'Просять 2 роки' } },
     { error: 'quota' },
   ];
-  const out = await runCode('search/cards.js', { input: ai, nodes: { 'Лише нові': src } });
+  const out = await runCode('search/cards.js', { input: ai, nodes: { 'Компанія зі сторінки': src } });
   const rows = out.filter((x) => x.kind === 'inbox');
   const msgs = out.filter((x) => x.kind === 'tg');
   assert.strictEqual(rows.length, 3);
@@ -118,6 +118,44 @@ test('cards: AI verdict decides status; every checked vacancy is saved', async (
   assert.strictEqual(msgs.length, 3, 'header + 2 cards');
   const buttons = msgs[1].payload.reply_markup.inline_keyboard[0];
   assert.match(buttons[0].callback_data, /^a:[0-9a-z]+$/);
+});
+
+test('parse-score: Djinni company guess skips section headings and the job title', async () => {
+  const item = (title, html) => `<item><title>${title}</title><link>https://djinni.co/jobs/${Math.random().toString(36).slice(2)}/</link>` +
+    `<description>${html.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</description></item>`;
+  const xml = '<rss><channel>' + [
+    item('Trainee QA one', '<p><strong>Byte Ensemble</strong> is a product company. Trainee QA, remote.</p>'),
+    item('Trainee QA two', '<p><strong>About the Company</strong></p><p>We build apps. Trainee QA.</p>'),
+    item('Trainee QA three', '<p><strong>Responsibilities:</strong></p><p>Testing. Trainee QA.</p>'),
+    item('Junior Financial Analyst', '<p><strong>Junior Financial Analyst</strong></p><p>Trainee, remote.</p>'),
+    item('Trainee QA four', '<p><strong>🔎Про компанію</strong></p><p>Trainee QA.</p>'),
+    item('Trainee QA five', '<p>Ласкаво просимо до <strong>Paystream</strong>. Trainee QA.</p>'),
+  ].join('') + '</channel></rss>';
+  const [res] = await runCode('search/parse-score.js', { input: [{ data: xml }], env: { MIN_SCORE: '-100' } });
+  const by = Object.fromEntries(res.candidates.map((c) => [c.title, c.company]));
+  assert.deepStrictEqual(by, {
+    'Trainee QA one': 'Byte Ensemble', 'Trainee QA two': '', 'Trainee QA three': '',
+    'Junior Financial Analyst': '', 'Trainee QA four': '', 'Trainee QA five': '',
+  });
+});
+
+test('company: takes the Djinni company from the vacancy page and updates the AI text', async () => {
+  const src = [
+    { route: 0, title: 'Junior QA', company: '', url: 'https://djinni.co/jobs/1-junior-qa/', source: 'Djinni', aiText: 'Title: Junior QA\nCompany: unknown\nLocation: x' },
+    { route: 0, title: 'Trainee BA', company: 'Nordlight', url: 'https://jobs.dou.ua/companies/nordlight/vacancies/2/', source: 'DOU', aiText: 'Company: Nordlight' },
+    { route: 0, title: 'Intern PM', company: 'Guess', url: 'https://djinni.co/jobs/3-intern-pm/', source: 'Djinni', aiText: 'Company: Guess' },
+    { route: 0, title: 'Junior Analyst', company: '', url: 'https://djinni.co/jobs/4-analyst/', source: 'Djinni', aiText: 'Company: unknown' },
+  ];
+  const pages = [
+    { data: '<script type="application/ld+json">{"@type": "JobPosting", "hiringOrganization": {"@type": "Organization", "name": "Pixelforge", "sameAs": "x"}}</script>' },
+    { data: '<html>DOU page</html>' },
+    { error: { message: 'timeout' } },
+    { data: '<meta property="og:title" content="Junior Analyst в Byte &amp; Co ">' },
+  ];
+  const out = await runCode('search/company.js', { input: pages, nodes: { 'Лише нові': src } });
+  assert.deepStrictEqual(out.map((v) => v.company), ['Pixelforge', 'Nordlight', 'Guess', 'Byte & Co']);
+  assert.match(out[0].aiText, /^Company: Pixelforge$/m);
+  assert.strictEqual(out[2].aiText, 'Company: Guess');
 });
 
 // ------------------------------------------------------------- telegram bot
@@ -229,6 +267,16 @@ test('page: parses a DOU vacancy page into a row', async () => {
   assert.deepStrictEqual([row.row_number, row['Компанія'], row['Позиція'], row['Локація'], row['Формат'], row['Зарплата'], row['Джерело']],
     [9, 'Nordlight', 'Trainee QA', 'Львів', 'Віддалено', '$300–500', 'DOU']);
   assert.strictEqual(out[2].kind, 'tg');
+});
+
+test('page: a Djinni link gets the company from the page', async () => {
+  const html = '<title>Trainee QA в Paystream – Djinni</title><meta property="og:title" content="Trainee QA в Paystream">' +
+    '<script type="application/ld+json">{"hiringOrganization": {"@type": "Organization", "name": "Paystream"}}</script>';
+  const out = await runCode('bot/page.js', {
+    input: [{ data: html }],
+    nodes: { 'Логіка бота': [{ kind: 'fetchPage', url: 'https://djinni.co/jobs/123-trainee-qa/', row_number: 7 }] },
+  });
+  assert.deepStrictEqual([out[0]['Компанія'], out[0]['Позиція'], out[0]['Джерело']], ['Paystream', 'Trainee QA', 'Djinni']);
 });
 
 // ------------------------------------------------------------- digest
