@@ -166,3 +166,18 @@ function rowsOf(nodeName) {
     return [];
   }
 }
+
+// Company name from a vacancy page: the JSON-LD "hiringOrganization" (Djinni, many
+// career sites), otherwise the "Position в Company" title that DOU and Djinni use.
+function companyFromPage(html) {
+  html = String(html || '');
+  const unq = (s) => s.replace(/\\u([0-9a-f]{4})/gi, (m, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\"/g, '"');
+  const ld = html.match(/"hiringOrganization"\s*:\s*\{[^{}]*?"name"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (ld && ld[1].trim()) return unq(ld[1]).trim();
+  const t = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"/i) || html.match(/<title[^>]*>([^<]*)</i);
+  if (!t) return '';
+  const title = t[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\s*[|–—-]\s*(Djinni|DOU)\s*$/i, '').trim();
+  const i = title.lastIndexOf(' в ');
+  return i > 0 ? title.slice(i + 3).split(',')[0].trim() : '';
+}

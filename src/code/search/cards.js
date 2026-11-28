@@ -5,7 +5,7 @@
 
 const MAX_CARDS = Number($env.MAX_CARDS || 15);
 
-const src = $('Лише нові').all().map((i) => i.json);
+const src = $('Компанія зі сторінки').all().map((i) => i.json);
 const ai = $input.all().map((i) => i.json);
 const stamp = nowStamp();
 
