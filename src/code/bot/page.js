@@ -45,6 +45,12 @@ function addPage(req, html) {
     if (sal) info.salary = decode(sal[1]).trim();
   }
 
+  // Djinni and many career sites: company from JSON-LD or "Position в Company"
+  if (!info.company) info.company = companyFromPage(html);
+  if (info.company && info.position.endsWith(' в ' + info.company)) {
+    info.position = info.position.slice(0, -(info.company.length + 3)).trim();
+  }
+
   const ok = Boolean(info.position);
   const row = {
     kind: 'updMain',
