@@ -1,0 +1,95 @@
+{
+  "_comment": "Fixed profile for unit tests, so tuning config/profile.json never breaks them.",
+  "candidate_profile": [
+    "Candidate: entry-level (trainee / intern / junior), no commercial experience yet. Master's in Computer Science (graduating Dec 2026).",
+    "Location: Lviv, Ukraine. Prefers remote, hybrid or an office in Lviv; an office in another city is fine for a good match.",
+    "Main interests: project management / coordination, no-code & AI automation (n8n, Apps Script, APIs), user acquisition / performance marketing,",
+    "business, data or financial analysis, QA (manual first, test automation is fine too).",
+    "Also open to adjacent trainee roles where the skills overlap: data engineering / BI, product design, analyst roles that use Python.",
+    "Skills: SQL, Postman / REST APIs, Jira, Python (intermediate), Google Sheets & Apps Script, n8n, Telegram bots. English B2.",
+    "Usually not a fit: roles for experienced specialists, software engineering as the main job, sales-only roles, customer support, night shifts."
+  ],
+  "feeds": {
+    "dou_searches": [
+      "trainee",
+      "intern",
+      "стажер",
+      "junior",
+      "project manager",
+      "project coordinator",
+      "delivery coordinator",
+      "business analyst",
+      "technical analyst",
+      "data analyst",
+      "manual qa",
+      "qa engineer",
+      "n8n",
+      "automation specialist",
+      "martech",
+      "pre-sale",
+      "user acquisition"
+    ],
+    "djinni_categories": [
+      "",
+      "Project Manager",
+      "Business Analyst",
+      "QA",
+      "Data Analyst",
+      "Marketing"
+    ]
+  },
+  "scoring": {
+    "boost": [
+      {
+        "pattern": "trainee|intern|стажер|стажув|junior|джуніор|entry",
+        "points": 4
+      },
+      {
+        "pattern": "project manager|project coordinator|\\bpm\\b|delivery|coordinator|координатор",
+        "points": 3
+      },
+      {
+        "pattern": "business analyst|\\bba\\b|technical analyst|data analyst|analyst|аналітик",
+        "points": 3
+      },
+      {
+        "pattern": "manual qa|\\bqa\\b|tester|тестувальник",
+        "points": 2
+      },
+      {
+        "pattern": "n8n|make\\.com|zapier|no-code|low-code|martech|automation|автоматизац",
+        "points": 3
+      },
+      {
+        "pattern": "user acquisition|\\bua\\b|media buy|pre-?sale|tender",
+        "points": 2
+      },
+      {
+        "pattern": "\\bsql\\b|postman|\\bjira\\b|python|\\bapi\\b",
+        "points": 1
+      }
+    ],
+    "penalty": [
+      {
+        "pattern": "senior|middle|сеньйор|principal|architect|director|head of",
+        "points": -6
+      },
+      {
+        "pattern": "\\blead\\b(?!\\s*gen)|team ?lead|тімлід",
+        "points": -6
+      },
+      {
+        "pattern": "developer|розробник|devops|designer|дизайнер|data scientist|ml engineer|software engineer",
+        "points": -8
+      },
+      {
+        "pattern": "support|підтримк|night shift",
+        "points": -3
+      }
+    ],
+    "preferred_location": {
+      "pattern": "львів|lviv|віддалено|remote|зимна вода",
+      "points": 2
+    }
+  }
+}

@@ -20,14 +20,15 @@ const crypto = require('crypto');
 const { FIT_SCHEMA, FIT_PROMPT } = require('./prompts');
 
 const ROOT = path.resolve(__dirname, '..');
-const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, 'config/profile.json'), 'utf8'));
-const input = process.argv[2] || path.join(ROOT, 'private/eval/vacancies.json');
+const CONFIG = JSON.parse(fs.readFileSync(process.env.PROFILE_FILE || path.join(ROOT, 'config/profile.json'), 'utf8'));
+const input = process.argv.slice(2).find((a) => !a.startsWith('--')) || path.join(ROOT, 'private/eval/vacancies.json');
 const cacheFile = path.join(path.dirname(input), 'cache.json');
 
 loadEnv(path.join(ROOT, '.env'));
 const KEY = process.env.GEMINI_API_KEY;
 const MODEL = process.env.GEMINI_MODEL || 'models/gemini-3.5-flash-lite';
-const DELAY_MS = Number(process.env.EVAL_DELAY_MS || 4500); // stays inside the free-tier rate limit
+const DELAY_MS = Number(process.env.EVAL_DELAY_MS || 4500);
+const REPORT_ONLY = process.argv.includes('--report-only'); // no new Gemini calls, report on what is cached // stays inside the free-tier rate limit
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
 
 // AI answers are cached per prompt + profile + model, so editing either re-asks Gemini
@@ -48,12 +49,12 @@ async function main() {
   let n = 0;
   for (const v of items) {
     n++;
-    if (cache.pages[v.url] === undefined) {
+    if (!REPORT_ONLY && cache.pages[v.url] === undefined) {
       cache.pages[v.url] = await fetchDescription(v.url);
       saveCache();
       await sleep(800);
     }
-    if (cache.ai[aiKey(v)] === undefined) {
+    if (!REPORT_ONLY && cache.ai[aiKey(v)] === undefined) {
       cache.ai[aiKey(v)] = await askGemini(aiText(v, cache.pages[v.url]));
       saveCache();
       process.stderr.write(`\r${n}/${items.length}`);
@@ -61,7 +62,27 @@ async function main() {
     }
   }
   process.stderr.write('\n');
+  await rescore(items);
   report(items);
+}
+
+// Re-scores every vacancy with the CURRENT keyword rules by running the real
+// "Розібрати й оцінити" node code on a feed built from the saved pages.
+async function rescore(items) {
+  const common = fs.readFileSync(path.join(ROOT, 'src/lib/common.js'), 'utf8');
+  const body = fs.readFileSync(path.join(ROOT, 'src/code/search/parse-score.js'), 'utf8');
+  const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const xml = '<rss><channel>' + items.map((v) => {
+    const title = /djinni\.co/i.test(v.url) ? v.title : `${v.title} в ${v.company || '-'}${v.location ? ', ' + v.location : ''}`;
+    return `<item><title>${esc(title)}</title><link>${esc(v.url)}</link><description>${esc(cache.pages[v.url] || '')}</description></item>`;
+  }).join('') + '</channel></rss>';
+  const wrap = [{ json: { data: xml } }];
+  // eslint-disable-next-line no-new-func
+  const fn = new Function('$input', '$env', `return (async () => {\nconst CONFIG = ${JSON.stringify(CONFIG)};\n${common}\n${body}\n})();`);
+  const [out] = await fn({ all: () => wrap, first: () => wrap[0] }, { MIN_SCORE: '-1000' });
+  const byUrl = {};
+  for (const c of out.json.candidates) byUrl[c.url] = c.score;
+  for (const v of items) v.newScore = byUrl[v.url] !== undefined ? byUrl[v.url] : byUrl[v.url.split('?')[0]];
 }
 
 // Same text the "Лише нові" node sends to the AI
@@ -78,7 +99,7 @@ function aiText(v, description) {
 
 async function fetchDescription(url) {
   try {
-    const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow' });
+    const res = await fetch(url, { headers: { 'User-Agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(20000) });
     if (!res.ok) return '';
     const html = await res.text();
     // DOU: <div class="b-typo vacancy-section">, Djinni: <div class="... job-post__description">
@@ -119,8 +140,20 @@ async function askGemini(text) {
     generationConfig: { temperature: 0.2, maxOutputTokens: 2048, responseMimeType: 'application/json', responseSchema: geminiSchema(FIT_SCHEMA) },
   };
   for (let attempt = 1; attempt <= 6; attempt++) {
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': KEY }, body: JSON.stringify(body) });
-    if (res.status === 429 || res.status >= 500) { await sleep(15000 * attempt); continue; }
+    let res;
+    try {
+      // a hung request must not stall the whole run
+      res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': KEY }, body: JSON.stringify(body), signal: AbortSignal.timeout(45000) });
+    } catch (e) {
+      process.stderr.write(` [timeout, retry ${attempt}]`);
+      continue;
+    }
+    if (res.status === 429) {
+      const t = await res.text();
+      // The free tier has a daily request cap: waiting minutes will not help, so stop and keep the cache
+      if (/PerDay/i.test(t)) { console.error('\nGemini daily quota is used up. Answers so far are cached; run again after the quota resets.'); process.exit(2); }
+    }
+    if (res.status === 429 || res.status >= 500) { process.stderr.write(` [${res.status}, waiting]`); await sleep(15000 * attempt); continue; }
     const j = await res.json();
     if (!res.ok) throw new Error(`Gemini ${res.status}: ${JSON.stringify(j.error || j).slice(0, 300)}`);
     try {
@@ -145,6 +178,7 @@ function stats(items, predict) {
 }
 
 function report(items) {
+  const MIN = Number(process.env.MIN_SCORE || 20);
   const answered = items.filter((v) => cache.ai[aiKey(v)]);
   const noPage = items.filter((v) => !cache.pages[v.url]).length;
   const aiPass = (v) => { const a = cache.ai[aiKey(v)]; return a.fit !== false && a.requires_experience !== true; };
@@ -154,6 +188,8 @@ function report(items) {
     ['Keywords, score ≥ 25', stats(answered, (v) => Number(v.score) >= 25)],
     ['Keywords + AI check', stats(answered, aiPass)],
     ['Keywords, score ≥ 20 + AI check', stats(answered, (v) => Number(v.score) >= 20 && aiPass(v))],
+    [`Current keyword rules, score ≥ ${MIN} (re-scored)`, stats(answered, (v) => v.newScore >= MIN)],
+    [`Current keyword rules, score ≥ ${MIN} + AI check (current setup)`, stats(answered, (v) => v.newScore >= MIN && aiPass(v))],
   ];
   console.log(`Evaluated ${answered.length} of ${items.length} labelled vacancies (${items.length - answered.length} without an AI answer, ${noPage} pages not available). Model: ${MODEL}, prompt version ${AI_VERSION}\n`);
   console.log('| Filter | Cards shown | Of them I added (precision) | My additions it kept (recall) |');
