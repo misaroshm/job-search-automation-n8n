@@ -2,7 +2,7 @@
 
 A self-hosted automation that runs my job search: it finds entry-level vacancies on DOU and Djinni, lets an LLM filter them against my profile, sends the good ones to Telegram with one-tap buttons, keeps a Google Sheet tracker up to date and uses AI to read rejection letters and point out what to improve.
 
-Built with **n8n**, **Google Sheets API**, **Telegram Bot API** and **Google Gemini**, running in **Docker**.
+Built with **n8n**, **Google Sheets API**, **Telegram Bot API** and **Google Gemini**, running in **Docker** on a free **Oracle Cloud** server, so it works 24/7.
 
 <p align="center">
   <img src="docs/screenshots/01-inbox-cards.png" width="32%" alt="Vacancy cards in Telegram with Add / Skip buttons">
@@ -37,7 +37,7 @@ flowchart LR
         DOU[DOU RSS]
         DJ[Djinni RSS]
     end
-    N8N["n8n<br/>(Docker on my laptop)"]
+    N8N["n8n<br/>(Docker on an Oracle Cloud<br/>Always Free VM)"]
     TG[Telegram Bot API]
     GS[(Google Sheets<br/>tracker)]
     AI[Gemini]
@@ -49,7 +49,7 @@ flowchart LR
     N8N -- "getUpdates every 5 s,<br/>sendMessage" --> TG
 ```
 
-All connections are outgoing: nothing on the internet needs to reach the laptop.
+All connections are outgoing: nothing on the internet needs to reach the server, so it has no open ports except SSH, and the n8n editor listens on localhost only (opened through an SSH tunnel when needed).
 
 **Two-stage filtering.** Cheap keyword scoring runs first (title matches weigh double, penalties for senior / development / support roles, hard drop for "1+ year" requirements), and only vacancies above the threshold go to the LLM. Every vacancy the AI has seen is stored, so it is never checked twice, and a single run is capped at 20 AI checks to stay inside the free Gemini tier.
 
@@ -59,7 +59,9 @@ All connections are outgoing: nothing on the internet needs to reach the laptop.
 
 **Polling instead of a webhook.** The first version used n8n's Telegram Trigger behind a Cloudflare quick tunnel with a Caddy gate. On a laptop that sleeps every night this broke: Cloudflare deleted the idle quick tunnel ("Tunnel not found"), and Docker lost DNS after wake-up, so the bot went silent. The bot now polls `getUpdates` every 5 seconds and confirms each batch immediately, so overlapping runs never process an update twice. No public URL, no open ports, and it simply resumes after sleep. Successful polls are not stored in the execution history; failures are.
 
-**Resilience.** Retries on Sheets, HTTP and AI nodes (Telegram calls retry for ~25 s to ride out the network coming back after sleep), public DNS for the container, a global error workflow, schedule triggers with "coalesce" misfire policy (if the laptop was asleep at 9:00 the run happens when it wakes up), stale Telegram buttons are detected by a row hash instead of updating the wrong row.
+**Hosting.** It first ran on my laptop, and the bot was silent whenever the lid was closed: Telegram kept the button presses for up to 24 hours and the bot processed them on wake-up, but that is not how a bot should feel. Because the bot polls instead of receiving webhooks, moving it needed no changes to the workflows: the same `docker-compose.yml` and `./setup.sh` now run on an Oracle Cloud Always Free VM (1 ARM core, 6 GB RAM, Ubuntu 24.04). The cost is zero.
+
+**Resilience.** Retries on Sheets, HTTP and AI nodes (Telegram calls retry for ~25 s to ride out the network coming back after sleep), public DNS for the container, a global error workflow, schedule triggers with "coalesce" misfire policy (if n8n was down at 9:00, the run happens as soon as it is back), stale Telegram buttons are detected by a row hash instead of updating the wrong row.
 
 ## Results
 
@@ -135,7 +137,7 @@ tests/                   unit tests
 
 ## Run it
 
-Requirements: Docker Desktop, a Telegram bot token, a Google Cloud service account with access to the sheet, a free Gemini API key.
+Requirements: Docker (Docker Desktop on a laptop), a Telegram bot token, a Google Cloud service account with access to the sheet, a free Gemini API key.
 
 ```bash
 cp .env.example .env            # fill it in
@@ -145,6 +147,24 @@ cp .env.example .env            # fill it in
 
 Then open http://localhost:5678, create the n8n owner account and write `/start` to the bot. A step-by-step guide in Ukrainian is in [docs/SETUP.uk.md](docs/SETUP.uk.md).
 
+### On a server
+
+Any small Linux server with Docker works; mine is an Oracle Cloud Always Free VM (VM.Standard.A1.Flex, Ubuntu 24.04). No ports need to be opened, since all traffic is outgoing.
+
+```bash
+# on the server, once
+sudo apt-get install -y docker.io docker-compose-v2
+
+# from your computer: copy the project with .env and the service account key
+rsync -az --exclude .git --exclude node_modules --exclude private ./ ubuntu@SERVER_IP:~/job-tracker/
+ssh ubuntu@SERVER_IP 'cd ~/job-tracker && sudo ./setup.sh'
+
+# n8n editor, when you need it: http://localhost:5678 through a tunnel
+ssh -L 5678:localhost:5678 ubuntu@SERVER_IP
+```
+
+Run only one copy at a time: two n8n instances polling the same bot would take each other's Telegram updates. To deploy a change, run the same `rsync` and `./setup.sh` again.
+
 ## Make it yours
 
 Everything personal about the search lives in [`config/profile.json`](config/profile.json): the candidate profile the AI matches against, DOU search terms and Djinni categories, and the keyword weights for scoring. Patterns are case-insensitive regular expressions. After editing it, run `npm run build` and `./setup.sh`.
@@ -153,6 +173,6 @@ To change the logic: edit `src/`, run `npm test && npm run build`, then `./setup
 
 ## Background
 
-I started tracking applications in a Google Sheet with an Apps Script automation and a Telegram bot. Apps Script answers webhooks with a redirect that Telegram treats as an error, and its quotas allowed polling only once a minute. Moving to n8n on my own machine removed the quota problem (polling every 5 seconds costs nothing), added AI nodes, proper error handling and testable code, and made the whole thing easy to show and extend.
+I started tracking applications in a Google Sheet with an Apps Script automation and a Telegram bot. Apps Script answers webhooks with a redirect that Telegram treats as an error, and its quotas allowed polling only once a minute. Moving to self-hosted n8n removed the quota problem (polling every 5 seconds costs nothing), added AI nodes, proper error handling and testable code, and made the whole thing easy to show and extend.
 
 Built with Claude as a coding assistant. I defined what the system should do and made the product decisions (approve vacancies in Telegram instead of auto-adding, schedules, score thresholds, self-hosting), then tested it on my own job search data and worked through the bugs.
