@@ -101,6 +101,15 @@ The AI check was worse than simply raising the keyword threshold. In 10 of the 1
 
 The current setup shows almost four times fewer cards than before, and about every second one is a vacancy I want. Most of that comes from the keyword threshold; the AI check on top removes 7 more cards at the cost of one wanted vacancy, and writes a one-line reason on every card. One caveat: the profile was tuned on the same 191 vacancies it is measured on, so the real numbers on new vacancies will likely be a bit lower. I'll re-run the evaluation on the next few weeks of decisions.
 
+**Round 3.** I narrowed the search profile: dropped project management and user acquisition from the interests, search terms and keyword boosts; added financial analyst to the search and a boost for BI / data engineering; stopped penalising designer roles; added a penalty for sales-manager roles. To compare fairly, both profiles are re-scored with the current keyword rules on the same 191 vacancies, each with its own AI answers:
+
+| Setup (score ≥ 20 + AI check) | Cards shown | Of them I added (precision) | My additions it kept (recall) |
+|---|---|---|---|
+| Previous profile | 57 | 23 (40%) | 23 of 31 (74%) |
+| New profile | 47 | 21 (45%) | 21 of 31 (68%) |
+
+The new profile is not clearly better. It shows 10 fewer cards and precision goes up a little, but it loses 2 of the vacancies I wanted. On a sample this small that is a trade-off, not an improvement. I'll decide whether fewer cards is worth it after a few weeks of new vacancies.
+
 ## Engineering
 
 - Search settings live in [`config/profile.json`](config/profile.json); the build injects them into the Code nodes that need them.
